@@ -61,7 +61,9 @@ Veja `.env.example`. As principais:
 | `ALLOWED_ORIGIN` | `https://eleicoes2turno.tapp.solutions` | CORS da API |
 | `TRUST_CLOUDFLARE` | `false` | `true` quando o Cloudflare faz proxy (usa `CF-Connecting-IP` no limite de requisições) |
 | `FAST_INTERVAL` | `30s` | Intervalo do ciclo rápido |
-| `MUN_CONCURRENCY` | `4` | Requisições simultâneas ao TSE na varredura de municípios |
+| `MUN_CONCURRENCY` | `1` | Requisições simultâneas ao TSE na varredura de municípios |
+| `MUN_PACE` | `500ms` | Pausa após cada requisição da varredura (o TSE bloqueia clientes que pedem demais) |
+| `ABROAD_EVERY` | `4` | Atualiza as cidades do exterior a cada N ciclos rápidos |
 | `ADSENSE_CLIENT` | vazio | ID de publisher (`ca-pub-…`); liga o AdSense e o `/ads.txt` |
 | `ADSENSE_SLOT_RESULTS` / `ADSENSE_SLOT_MOBILE` | vazio | Blocos de anúncio |
 | `HOUSE_AD_IMAGE` / `HOUSE_AD_LINK` / `HOUSE_AD_ALT` | banner da Tapp | Banner próprio, mostrado quando o AdSense não está configurado |

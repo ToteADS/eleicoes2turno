@@ -77,7 +77,8 @@ func main() {
 func startPolling(ctx context.Context, log *slog.Logger, cfg *config.Config, client *tse.Client,
 	store *cache.MemoryStore, abroad []entities.AbroadCity) {
 	poller := services.NewPoller(client, store, nil, abroad, services.PollerOptions{
-		FastInterval: cfg.FastInterval, MunConcurrency: cfg.MunConcurrency, Logger: log, Parse: tse.ParseResult,
+		FastInterval: cfg.FastInterval, MunConcurrency: cfg.MunConcurrency, MunPace: cfg.MunPace,
+		AbroadEvery: cfg.AbroadEvery, Logger: log, Parse: tse.ParseResult,
 	})
 	poller.SetCatalog(loadCatalog(ctx, log, client))
 	poller.Run(ctx)

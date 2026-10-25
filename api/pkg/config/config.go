@@ -21,6 +21,8 @@ type Config struct {
 	TSEBaseURL     string
 	FastInterval   time.Duration
 	MunConcurrency int
+	MunPace        time.Duration
+	AbroadEvery    int
 
 	AdsenseClient      string
 	AdsenseSlotResults string
@@ -53,9 +55,12 @@ func Load() Config {
 		AllowedOrigin:   str("ALLOWED_ORIGIN", "https://eleicoes2turno.tapp.solutions"),
 		TrustCloudflare: boolean("TRUST_CLOUDFLARE", false),
 
-		TSEBaseURL:     str("TSE_BASE_URL", "https://resultados.tse.jus.br/oficial"),
-		FastInterval:   duration("FAST_INTERVAL", 30*time.Second),
-		MunConcurrency: positive("MUN_CONCURRENCY", 4),
+		TSEBaseURL:   str("TSE_BASE_URL", "https://resultados.tse.jus.br/oficial"),
+		FastInterval: duration("FAST_INTERVAL", 30*time.Second),
+		// The TSE throttles heavy clients: the sweep defaults to ~2 requests/s.
+		MunConcurrency: positive("MUN_CONCURRENCY", 1),
+		MunPace:        duration("MUN_PACE", 500*time.Millisecond),
+		AbroadEvery:    positive("ABROAD_EVERY", 4),
 
 		AdsenseClient:      str("ADSENSE_CLIENT", ""),
 		AdsenseSlotResults: str("ADSENSE_SLOT_RESULTS", ""),

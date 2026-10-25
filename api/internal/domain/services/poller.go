@@ -37,6 +37,11 @@ func munPath(uf, code string) string {
 type PollerOptions struct {
 	FastInterval   time.Duration
 	MunConcurrency int
+	// MunPace is the pause each sweep worker takes after a request, so the
+	// sweep stays under the TSE rate limit (requests/s = MunConcurrency/MunPace).
+	MunPace time.Duration
+	// AbroadEvery refreshes the abroad cities on one fast cycle out of N (default 1).
+	AbroadEvery int
 	// UFs defaults to AllUFs.
 	UFs    []string
 	Logger *slog.Logger
@@ -57,6 +62,7 @@ type Poller struct {
 
 	mu         sync.Mutex
 	failures   int
+	cycles     int
 	last       entities.Snapshot
 	hasLast    bool
 	ufs        map[string]entities.AreaResult
@@ -75,6 +81,9 @@ func NewPoller(src repositories.ResultSource, store repositories.ResultStore, ca
 	}
 	if opt.Logger == nil {
 		opt.Logger = slog.Default()
+	}
+	if opt.AbroadEvery < 1 {
+		opt.AbroadEvery = 1
 	}
 	if opt.CycleTimeout <= 0 {
 		opt.CycleTimeout = 25 * time.Second
@@ -145,8 +154,9 @@ type fetched struct {
 	err  error
 }
 
-// fetchAll fetches paths (key -> path) with bounded concurrency.
-func (p *Poller) fetchAll(ctx context.Context, paths map[string]string, limit int) []fetched {
+// fetchAll fetches paths (key -> path) with bounded concurrency; each worker
+// waits pace after its request before taking the next one.
+func (p *Poller) fetchAll(ctx context.Context, paths map[string]string, limit int, pace time.Duration) []fetched {
 	out := make([]fetched, 0, len(paths))
 	var mu sync.Mutex
 	var wg sync.WaitGroup
@@ -166,6 +176,12 @@ func (p *Poller) fetchAll(ctx context.Context, paths map[string]string, limit in
 			mu.Lock()
 			out = append(out, f)
 			mu.Unlock()
+			if pace > 0 {
+				select {
+				case <-ctx.Done():
+				case <-time.After(pace):
+				}
+			}
 		}(key, path)
 	}
 	wg.Wait()
@@ -183,16 +199,24 @@ func (p *Poller) RunFastOnce(ctx context.Context) error {
 	for _, uf := range p.opt.UFs {
 		paths["uf:"+uf] = ufPath(uf)
 	}
-	if err := p.publish(p.fetchAll(ctx, paths, fastConcurrency), len(paths)); err != nil {
+	if err := p.publish(p.fetchAll(ctx, paths, fastConcurrency, 0), len(paths)); err != nil {
 		return err
 	}
 
-	// phase 2: abroad cities (countries are built from them)
+	// phase 2: abroad cities (countries are built from them), on one cycle out
+	// of AbroadEvery: they are counted early and 186 files are a big share of the load
+	p.mu.Lock()
+	p.cycles++
+	due := (p.cycles-1)%p.opt.AbroadEvery == 0
+	p.mu.Unlock()
+	if !due {
+		return nil
+	}
 	cityPaths := make(map[string]string, len(p.abroad))
 	for _, c := range p.abroad {
 		cityPaths["city:"+c.Code] = munPath("zz", c.Code)
 	}
-	return p.publish(p.fetchAll(ctx, cityPaths, fastConcurrency), len(cityPaths))
+	return p.publish(p.fetchAll(ctx, cityPaths, fastConcurrency, 0), len(cityPaths))
 }
 
 // publish merges fetched files into the last known state and stores a new
@@ -203,11 +227,15 @@ func (p *Poller) publish(results []fetched, total int) error {
 
 	var br *fetched
 	var zz entities.AreaResult
+	var firstErr error
 	failed := 0
 	for i := range results {
 		f := results[i]
 		if f.err != nil {
 			failed++
+			if firstErr == nil {
+				firstErr = f.err
+			}
 			continue
 		}
 		switch {
@@ -235,7 +263,7 @@ func (p *Poller) publish(results []fetched, total int) error {
 			p.last.Stale = true
 			p.store.SetSummary(p.last)
 		}
-		return fmt.Errorf("brazil total unavailable (%d/%d files failed)", failed, total)
+		return fmt.Errorf("brazil total unavailable (%d/%d files failed, e.g. %v)", failed, total, firstErr)
 	}
 	if !isCityPhase {
 		p.failures = 0
@@ -292,7 +320,7 @@ func (p *Poller) SweepMunicipalitiesOnce(ctx context.Context) error {
 		for _, m := range list {
 			paths[m.IBGECode] = munPath(uf, m.TSECode)
 		}
-		results := p.fetchAll(ctx, paths, p.opt.MunConcurrency)
+		results := p.fetchAll(ctx, paths, p.opt.MunConcurrency, p.opt.MunPace)
 
 		p.mu.Lock()
 		prev := p.munResults[uf]

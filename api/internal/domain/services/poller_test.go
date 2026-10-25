@@ -21,11 +21,16 @@ type fakeSource struct {
 	mu    sync.Mutex
 	files map[string]string
 	fail  bool
+	calls map[string]int
 }
 
 func (f *fakeSource) Fetch(_ context.Context, path string) ([]byte, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.calls == nil {
+		f.calls = map[string]int{}
+	}
+	f.calls[path]++
 	if f.fail {
 		return nil, false, errors.New("tse down")
 	}
@@ -255,5 +260,54 @@ func TestPoller_SummaryWithoutCatalog(t *testing.T) {
 	}
 	if _, _, _, ok := store.Payload(repositories.KeyMunicipalities("ba")); !ok {
 		t.Error("sweep should run once the catalog is set")
+	}
+}
+
+func TestPoller_FailureReportsCause(t *testing.T) {
+	src, cat, abroad := newFixture()
+	src.fail = true
+	p := newTestPoller(src, cat, abroad, cache.NewMemoryStore())
+	err := p.RunFastOnce(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "tse down") {
+		t.Errorf("err = %v, want it to carry the fetch error", err)
+	}
+}
+
+func TestPoller_AbroadCitiesEveryNthCycle(t *testing.T) {
+	src, cat, abroad := newFixture()
+	store := cache.NewMemoryStore()
+	p := NewPoller(src, store, cat, abroad, PollerOptions{
+		FastInterval: time.Second, UFs: []string{"ba", "sp"}, Parse: tse.ParseResult, AbroadEvery: 3,
+	})
+	for i := 0; i < 4; i++ {
+		if err := p.RunFastOnce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if s := decodeSummary(t, store); s.Countries[392].Lula != 9 {
+			t.Fatalf("cycle %d: Japan = %+v, want kept between abroad refreshes", i+1, s.Countries[392])
+		}
+	}
+	if n := src.calls[munPath("zz", "30627")]; n != 2 {
+		t.Errorf("abroad city fetched %d times in 4 cycles, want 2 (cycles 1 and 4)", n)
+	}
+	if n := src.calls[brPath()]; n != 4 {
+		t.Errorf("BR fetched %d times, want every cycle", n)
+	}
+}
+
+func TestPoller_SweepIsPaced(t *testing.T) {
+	src, cat, abroad := newFixture()
+	for i := 0; i < 3; i++ {
+		cat = append(cat, entities.Municipality{UF: "ba", TSECode: fmt.Sprintf("9000%d", i), IBGECode: fmt.Sprintf("290000%d", i)})
+	}
+	p := NewPoller(src, cache.NewMemoryStore(), cat, abroad, PollerOptions{
+		FastInterval: time.Second, MunConcurrency: 1, MunPace: 30 * time.Millisecond, UFs: []string{"ba"}, Parse: tse.ParseResult,
+	})
+	start := time.Now()
+	if err := p.SweepMunicipalitiesOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d < 90*time.Millisecond {
+		t.Errorf("4 municipalities swept in %v, want at least 3 pauses of 30ms", d)
 	}
 }
