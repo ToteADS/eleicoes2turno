@@ -43,6 +43,8 @@
   "status_no_data": "No data for this area yet",
   "status_updated": "Updated by TSE at {time}",
   "status_stale": "TSE unstable · data from {time}",
+  "status_checked_s": "checked {n} s ago",
+  "status_checked_min": "checked {n} min ago",
   "status_loading": "Loading…",
   "status_error": "Could not load data. Retrying…",
   "globe_pause": "Pause rotation",

@@ -226,6 +226,96 @@ describe('app', () => {
     }
   });
 
+  it('shows how long ago the summary was checked, ticking on its own', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+    try {
+      vi.setSystemTime(new Date('2026-10-25T20:30:00Z'));
+      const app = await createApp(deps(new FakeGlobe(), []));
+      const line = document.querySelector<HTMLElement>('.results-r2 .updated')!;
+      expect(line.textContent).toBe('Atualizado pelo TSE às 17:30verificado há 0 s');
+      vi.advanceTimersByTime(12_000);
+      expect(line.querySelector('.checked')?.textContent).toBe('verificado há 12 s');
+      vi.advanceTimersByTime(48_000); // the 60 s poll succeeds and resets the age
+      await flush();
+      expect(line.querySelector('.checked')?.textContent).toBe('verificado há 0 s');
+      vi.advanceTimersByTime(3_000);
+      expect(line.querySelector('.checked')?.textContent).toBe('verificado há 3 s');
+      app.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('the first round does not show the checked label', async () => {
+    history.replaceState(null, '', '/?turno=1');
+    const app = await createApp(deps(new FakeGlobe(), []));
+    expect(document.querySelector('.results-r1')?.textContent).not.toContain('verificado');
+    expect(document.querySelector<HTMLElement>('.results-r2')!.hidden).toBe(true);
+    app.dispose();
+  });
+
+  describe('tab visibility', () => {
+    let state: DocumentVisibilityState = 'visible';
+    beforeAll(() => Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state }));
+    afterAll(() => { delete (document as { visibilityState?: unknown }).visibilityState; });
+    beforeEach(() => { state = 'visible'; });
+    const show = (s: DocumentVisibilityState) => {
+      state = s;
+      document.dispatchEvent(new Event('visibilitychange'));
+    };
+
+    it('polls right away when the tab becomes visible again, and not after dispose', async () => {
+      const calls: string[] = [];
+      const app = await createApp(deps(new FakeGlobe(), calls));
+      const count = () => calls.filter((c) => c === 'summary').length;
+      expect(count()).toBe(1);
+      show('hidden');
+      await flush();
+      expect(count()).toBe(1);
+      show('visible');
+      await flush();
+      expect(count()).toBe(2);
+      app.dispose();
+      show('hidden');
+      show('visible');
+      await flush();
+      expect(count()).toBe(2);
+    });
+
+    it('does not start a second poll while one is in flight', async () => {
+      const d = deps(new FakeGlobe(), []);
+      let pending = 0;
+      let release: () => void = () => {};
+      const app = await createApp(d);
+      d.api.summary = () => {
+        pending++;
+        return new Promise((res) => { release = () => res(summary); });
+      };
+      show('visible');
+      show('visible');
+      await flush();
+      expect(pending).toBe(1);
+      release();
+      await flush();
+      show('visible');
+      await flush();
+      expect(pending).toBe(2);
+      release();
+      await flush();
+      app.dispose();
+    });
+
+    it('the first round ignores the tab coming back', async () => {
+      history.replaceState(null, '', '/?turno=1');
+      const calls: string[] = [];
+      const app = await createApp(deps(new FakeGlobe(), calls));
+      show('visible');
+      await flush();
+      expect(calls).not.toContain('summary');
+      app.dispose();
+    });
+  });
+
   it('first-round hover shows the ranking of the area', async () => {
     history.replaceState(null, '', '/?turno=1');
     const globe = new FakeGlobe();

@@ -43,6 +43,8 @@
   "status_no_data": "Sem dados para esta área ainda",
   "status_updated": "Atualizado pelo TSE às {time}",
   "status_stale": "TSE instável · dados de {time}",
+  "status_checked_s": "verificado há {n} s",
+  "status_checked_min": "verificado há {n} min",
   "status_loading": "Carregando…",
   "status_error": "Não foi possível carregar os dados. Tentando de novo…",
   "globe_pause": "Pausar rotação",

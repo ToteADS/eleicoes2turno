@@ -139,6 +139,16 @@ partido + % + votos de cada candidato, selo "LIDERA", barra vermelho/azul, váli
 nulos, comparecimento, abstenção, eleitorado, horário da última atualização do TSE.
 Estado "aguardando divulgação (17h)" enquanto o TSE estiver zerado.
 
+#### Atualização
+O site busca o resumo a cada 30 s com a aba visível. Quando a aba volta a ficar visível
+(`visibilitychange`), busca na hora em vez de esperar o próximo ciclo; uma flag evita duas
+buscas simultâneas. Ao lado de "Atualizado pelo TSE às HH:MM" aparece "verificado há 12 s"
+(a partir de 60 s, "verificado há 2 min"): é a idade da última busca do resumo que deu certo,
+medida no navegador, para mostrar que o site está vivo mesmo quando o arquivo do TSE não muda.
+Só esse rótulo é redesenhado, a cada 1 s (`web/src/presenter/checked-ago.ts`); o card inteiro
+não. Só no 2º turno: o 1º turno é um retrato final e não mostra o rótulo. Textos em pt/en/es
+(`status_checked_s`, `status_checked_min`).
+
 ### Responsividade
 - **Desktop (≥1024)**: filtros no topo à esquerda, resultados à direita (≈400px), controles embaixo à esquerda.
 - **Tablet (640–1023)**: paisagem igual ao desktop com card mais estreito; retrato com resultados em painel inferior.

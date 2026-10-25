@@ -129,6 +129,8 @@ a { color: inherit; }
 .row em { font-style: normal; color: var(--muted); margin-left: 10px; font-size: 11.5px; display: inline-block; min-width: 50px; text-align: right; }
 .updated { font-size: 11.5px; color: var(--muted); margin-top: 8px; min-height: 1em; }
 .updated.warn { color: #b45309; font-weight: 600; }
+.updated .checked { font-weight: 400; color: var(--muted); }
+.updated [data-ref="updated"]:not(:empty) + .checked:not(:empty)::before { content: ' · '; }
 
 /* ---------- first round: ranked candidates ---------- */
 .results-body[hidden] { display: none; }

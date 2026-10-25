@@ -7,6 +7,7 @@ import { tabId } from '../infra/tab-id';
 import type { AreaCollection, GlobePick, GlobeRenderer, GlobeView } from '../infra/globe';
 import { t } from '../i18n';
 import { AdSlot } from './ad-slot';
+import { CheckedAgo } from './checked-ago';
 import { CreatorCredit } from './creator-credit';
 import { FiltersCard } from './filters-card';
 import { GlobeControls } from './globe-controls';
@@ -90,6 +91,7 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
   const $ = <T extends HTMLElement>(sel: string) => d.root.querySelector<T>(sel)!;
   const filtersCard = new FiltersCard($('#topbar'));
   const resultsCard = new ResultsCard($('.results-r2'));
+  const checked = new CheckedAgo(resultsCard.checkedSlot);
   const round1Card = new Round1Card($('.results-r1'));
   const roundToggle = new RoundToggle(filtersCard.roundSlot);
   const tooltip = new Tooltip($('.tip'));
@@ -120,6 +122,7 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
   let failedPolls = 0;
   const loadRound2 = async () => {
     summary = await d.api.summary().catch(() => { failedPolls++; return null; });
+    if (summary) checked.mark();
     abroadResults = (await d.api.abroadCities().catch(() => null))?.items ?? {};
   };
   await (round === 1 ? loadRound1() : loadRound2());
@@ -282,16 +285,20 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
   render();
   globe.focus(viewFor(filters));
 
+  let polling = false;
   const poll = async () => {
     if (round !== 2 || document.visibilityState === 'hidden') return; // the first round is final
+    if (polling) return; // one poll at a time (timer + tab coming back)
+    polling = true;
     const [s, abroad, muni] = await Promise.all([
       d.api.summary().catch(() => null),
       d.api.abroadCities().catch(() => null),
       filters.uf ? d.api.municipalities(filters.uf).catch(() => null) : Promise.resolve(null),
-    ]);
+    ]).finally(() => { polling = false; });
     if (s) {
       summary = s;
       failedPolls = 0;
+      checked.mark();
     } else {
       failedPolls++;
     }
@@ -301,10 +308,16 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
     render();
   };
   const timer = window.setInterval(() => void poll(), d.pollMs ?? 30_000);
+  // a tab coming back to the front refreshes right away instead of waiting for the next tick
+  const onVisibility = () => void poll();
+  document.addEventListener('visibilitychange', onVisibility);
+  checked.start();
 
   return {
     dispose() {
       window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisibility);
+      checked.stop();
       online.stop();
       window.removeEventListener('resize', updatePadding);
       for (const slot of adSlots) slot.stop();

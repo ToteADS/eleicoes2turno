@@ -33,7 +33,12 @@ export class ResultsCard {
         </div>`).join('')}
       <div class="split" aria-hidden="true"><i class="sl"></i><i class="sf"></i></div>
       <div class="rows" data-ref="rows"></div>
-      <div class="updated" data-ref="updated"></div>`;
+      <div class="updated" data-ref="updated-line"><span data-ref="updated"></span><span class="checked" data-ref="checked"></span></div>`;
+  }
+
+  /** Slot for the "verificado há X s" label, updated on its own every second. */
+  get checkedSlot(): HTMLElement {
+    return this.el.querySelector<HTMLElement>('[data-ref="checked"]')!;
   }
 
   render(scope: Scope, candidates: Candidate[], stale: boolean, staleTime: string): void {
@@ -73,6 +78,6 @@ export class ResultsCard {
     $('updated').textContent = stale
       ? t('status_stale', { time: staleTime })
       : r?.released && r.hg ? t('status_updated', { time: r.hg.slice(0, 5) }) : '';
-    $('updated').classList.toggle('warn', stale);
+    $('updated-line').classList.toggle('warn', stale);
   }
 }
