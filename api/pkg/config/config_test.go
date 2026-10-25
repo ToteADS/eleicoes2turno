@@ -19,7 +19,7 @@ func TestLoad_Defaults(t *testing.T) {
 	if c.TSEBaseURL != "https://resultados.tse.jus.br/oficial" || c.AllowedOrigin != "https://eleicoes2turno.tapp.solutions" {
 		t.Errorf("defaults = %+v", c)
 	}
-	if c.HouseAdLink != "https://tapp.solutions" || c.HouseAdImage != "/ads/tapp-banner.svg" || c.AdsenseClient != "" {
+	if c.HouseAdLink != "https://tapp.solutions" || c.HouseAdImage != "/ads/tapp-banner-v2.svg" || c.AdsenseClient != "" {
 		t.Errorf("ad defaults = %+v", c)
 	}
 }

@@ -110,7 +110,7 @@ describe('ResultsCard', () => {
 
 describe('AdSlot', () => {
   const config: PublicConfig = { ads: { adsenseClient: '', slotResults: '', slotMobile: '',
-    house: { image: '/ads/tapp-banner.svg', link: 'https://tapp.solutions', alt: 'Tapp Solutions' } } };
+    house: { image: '/ads/tapp-banner-v2.svg', link: 'https://tapp.solutions', alt: 'Tapp Solutions' } } };
   it('renders the house banner', () => {
     const el = document.createElement('div');
     new AdSlot(el, 'results').render(config);

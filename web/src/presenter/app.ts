@@ -32,7 +32,7 @@ export interface AppDeps {
 }
 
 const DEFAULT_CONFIG: PublicConfig = {
-  ads: { adsenseClient: '', slotResults: '', slotMobile: '', house: { image: '/ads/tapp-banner.svg', link: 'https://tapp.solutions', alt: 'Tapp Solutions' } },
+  ads: { adsenseClient: '', slotResults: '', slotMobile: '', house: { image: '/ads/tapp-banner-v2.svg', link: 'https://tapp.solutions', alt: 'Tapp Solutions' } },
 };
 
 /** Floating side card layout: desktop, and tablets in landscape. Otherwise bottom dock. */

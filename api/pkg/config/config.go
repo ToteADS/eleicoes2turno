@@ -65,7 +65,7 @@ func Load() Config {
 		AdsenseClient:      str("ADSENSE_CLIENT", ""),
 		AdsenseSlotResults: str("ADSENSE_SLOT_RESULTS", ""),
 		AdsenseSlotMobile:  str("ADSENSE_SLOT_MOBILE", ""),
-		HouseAdImage:       str("HOUSE_AD_IMAGE", "/ads/tapp-banner.svg"),
+		HouseAdImage:       str("HOUSE_AD_IMAGE", "/ads/tapp-banner-v2.svg"),
 		HouseAdLink:        str("HOUSE_AD_LINK", "https://tapp.solutions"),
 		HouseAdAlt:         str("HOUSE_AD_ALT", "Tapp Solutions"),
 	}

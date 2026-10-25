@@ -38,6 +38,9 @@ func Static(dir string) http.Handler {
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		case strings.HasPrefix(clean, "/geo/"), strings.HasPrefix(clean, "/fonts/"):
 			w.Header().Set("Cache-Control", "public, max-age=86400")
+		case strings.HasPrefix(clean, "/ads/"), strings.HasPrefix(clean, "/brand/"):
+			// Not fingerprinted and swapped in place: keep them short-lived.
+			w.Header().Set("Cache-Control", "public, max-age=300")
 		default:
 			w.Header().Set("Cache-Control", "public, max-age=3600")
 		}

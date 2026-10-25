@@ -89,7 +89,7 @@ func TestAbroadCities(t *testing.T) {
 
 func TestConfig(t *testing.T) {
 	h := NewPublicConfig(AdsConfig{AdsenseClient: "ca-pub-9424129340132469", SlotResults: "1", SlotMobile: "2",
-		HouseImage: "/ads/tapp-banner.svg", HouseLink: "https://tapp.solutions", HouseAlt: "Tapp Solutions"})
+		HouseImage: "/ads/tapp-banner-v2.svg", HouseLink: "https://tapp.solutions", HouseAlt: "Tapp Solutions"})
 	rec := serve(h, httptest.NewRequest("GET", "/api/v1/config", nil))
 	var got struct {
 		Ads struct {
@@ -136,6 +136,10 @@ func TestStatic(t *testing.T) {
 	must(os.WriteFile(filepath.Join(dir, "assets", "main-abc123.js"), []byte("js"), 0o644))
 	must(os.MkdirAll(filepath.Join(dir, "geo", "mun"), 0o755))
 	must(os.WriteFile(filepath.Join(dir, "geo", "states.json"), []byte("{}"), 0o644))
+	must(os.MkdirAll(filepath.Join(dir, "ads"), 0o755))
+	must(os.WriteFile(filepath.Join(dir, "ads", "banner.svg"), []byte("<svg/>"), 0o644))
+	must(os.MkdirAll(filepath.Join(dir, "brand"), 0o755))
+	must(os.WriteFile(filepath.Join(dir, "brand", "logo.webp"), []byte("img"), 0o644))
 	h := Static(dir)
 
 	rec := serve(h, httptest.NewRequest("GET", "/assets/main-abc123.js", nil))
@@ -145,6 +149,14 @@ func TestStatic(t *testing.T) {
 	rec = serve(h, httptest.NewRequest("GET", "/geo/states.json", nil))
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Header().Get("Cache-Control"), "max-age=86400") {
 		t.Errorf("geo = %d %v", rec.Code, rec.Header())
+	}
+	// Ads and brand images are not fingerprinted: keep them short-lived so a
+	// swap reaches every visitor within minutes.
+	for _, p := range []string{"/ads/banner.svg", "/brand/logo.webp"} {
+		rec = serve(h, httptest.NewRequest("GET", p, nil))
+		if rec.Code != http.StatusOK || rec.Header().Get("Cache-Control") != "public, max-age=300" {
+			t.Errorf("%s = %d %v", p, rec.Code, rec.Header())
+		}
 	}
 	rec = serve(h, httptest.NewRequest("GET", "/", nil))
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "app") || !strings.Contains(rec.Header().Get("Cache-Control"), "no-cache") {
