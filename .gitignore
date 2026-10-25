@@ -1,0 +1,8 @@
+.superpowers/
+.impeccable/
+node_modules/
+dist/
+coverage/
+.env
+*.out
+.DS_Store
