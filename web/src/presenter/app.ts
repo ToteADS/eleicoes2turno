@@ -95,8 +95,8 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
   const countries = [...new Map(abroadCities.map((c) => [c.iso, c.country])).entries()]
     .map(([iso, name]) => ({ iso, name })).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
 
-  new AdSlot($('.ad-results'), 'results').render(config);
-  new AdSlot($('.ad-mobile'), 'mobile').render(config);
+  const adSlots = [new AdSlot($('.ad-results'), 'results'), new AdSlot($('.ad-mobile'), 'mobile')];
+  for (const slot of adSlots) slot.render(config);
   new CreatorCredit($('.credit')).render();
 
   let globe = d.globe;
@@ -237,6 +237,7 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
     dispose() {
       window.clearInterval(timer);
       window.removeEventListener('resize', updatePadding);
+      for (const slot of adSlots) slot.stop();
     },
   };
 }

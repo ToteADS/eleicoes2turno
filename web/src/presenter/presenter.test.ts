@@ -127,6 +127,38 @@ describe('AdSlot', () => {
     expect(ins?.getAttribute('data-ad-slot')).toBe('123');
     expect(document.querySelectorAll('script[src*="adsbygoogle.js"]').length).toBe(1);
   });
+  it('rotates between the house banner and the partner banners', () => {
+    vi.useFakeTimers();
+    try {
+      const el = document.createElement('div');
+      const partner = { image: '/ads/onlide-banner.svg', link: 'https://onlidegestao.com.br', alt: 'OnLide' };
+      const slot = new AdSlot(el, 'results', { partners: [partner], rotateMs: 15_000 });
+      slot.render(config);
+      const href = () => el.querySelector('a')?.getAttribute('href');
+      expect(href()).toBe('https://tapp.solutions');
+      vi.advanceTimersByTime(15_000);
+      expect(href()).toBe('https://onlidegestao.com.br');
+      expect(el.querySelector('img')?.getAttribute('alt')).toBe('OnLide');
+      vi.advanceTimersByTime(15_000);
+      expect(href()).toBe('https://tapp.solutions');
+      slot.stop();
+      vi.advanceTimersByTime(15_000);
+      expect(href()).toBe('https://tapp.solutions');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it('ships OnLide as a partner banner by default', () => {
+    vi.useFakeTimers();
+    try {
+      const el = document.createElement('div');
+      new AdSlot(el, 'results').render(config);
+      vi.advanceTimersByTime(15_000);
+      expect(el.querySelector('a')?.getAttribute('href')).toBe('https://onlidegestao.com.br');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it('falls back to the house banner when AdSense has no slot for the placement', () => {
     const el = document.createElement('div');
     new AdSlot(el, 'results').render({ ads: { ...config.ads, adsenseClient: 'ca-pub-1', slotMobile: '123' } });
