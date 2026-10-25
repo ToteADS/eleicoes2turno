@@ -55,5 +55,7 @@
   "ads_label": "Advertisement",
   "footer_source": "Source: TSE · resultados.tse.jus.br",
   "footer_code": "Open source",
-  "status_globe_unavailable": "Globe unavailable on this device — results are still available through the filters."
+  "status_globe_unavailable": "Globe unavailable on this device — results are still available through the filters.",
+  "credit_by": "Made by",
+  "credit_portfolio": "Portfolio →"
 }

@@ -4,6 +4,7 @@ import { latest } from '../infra/api';
 import type { AreaCollection, GlobePick, GlobeRenderer, GlobeView } from '../infra/globe';
 import { t } from '../i18n';
 import { AdSlot } from './ad-slot';
+import { CreatorCredit } from './creator-credit';
 import { FiltersCard } from './filters-card';
 import { GlobeControls } from './globe-controls';
 import { ResultsCard } from './results-card';
@@ -57,6 +58,7 @@ function shell(root: HTMLElement): void {
         <button type="button" class="sheet-handle" aria-expanded="false"><span></span><em>${t('results_expand')}</em></button>
         <div class="results-body"></div>
         <div class="ad ad-results"></div>
+        <div class="credit"></div>
       </aside>
     </div>
     <nav class="controls" aria-label="Globo"></nav>
@@ -95,6 +97,7 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
 
   new AdSlot($('.ad-results'), 'results').render(config);
   new AdSlot($('.ad-mobile'), 'mobile').render(config);
+  new CreatorCredit($('.credit')).render();
 
   let globe = d.globe;
   try {

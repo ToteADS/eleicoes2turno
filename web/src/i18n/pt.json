@@ -55,5 +55,7 @@
   "ads_label": "Publicidade",
   "footer_source": "Fonte: TSE · resultados.tse.jus.br",
   "footer_code": "Código aberto",
-  "status_globe_unavailable": "Globo indisponível neste dispositivo — os resultados continuam disponíveis nos filtros."
+  "status_globe_unavailable": "Globo indisponível neste dispositivo — os resultados continuam disponíveis nos filtros.",
+  "credit_by": "Criado por",
+  "credit_portfolio": "Portfólio →"
 }
