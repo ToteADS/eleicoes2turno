@@ -54,5 +54,6 @@
   "globe_hint": "Arraste para girar · role ou pince para aproximar · toque num país, estado ou cidade",
   "ads_label": "Publicidade",
   "footer_source": "Fonte: TSE · resultados.tse.jus.br",
-  "footer_code": "Código aberto"
+  "footer_code": "Código aberto",
+  "status_globe_unavailable": "Globo indisponível neste dispositivo — os resultados continuam disponíveis nos filtros."
 }

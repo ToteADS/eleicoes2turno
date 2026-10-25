@@ -13,8 +13,8 @@ export function share(r: AreaResult | undefined): number | null {
 
 export function leaderSide(r: AreaResult | undefined): Side {
   const s = share(r);
-  if (s === null) return 'X';
-  return s >= 0.5 ? 'L' : 'R';
+  if (s === null || s === 0.5) return 'X'; // an exact tie has no leader
+  return s > 0.5 ? 'L' : 'R';
 }
 
 function nonEmpty(g: Polygon | MultiPolygon): boolean {

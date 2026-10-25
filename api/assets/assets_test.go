@@ -26,3 +26,10 @@ func TestParseAbroadCities_Invalid(t *testing.T) {
 		t.Error("expected error")
 	}
 }
+
+func TestFallbackCatalog(t *testing.T) {
+	b := FallbackCatalog()
+	if len(b) < 100000 {
+		t.Fatalf("fallback catalog too small: %d bytes", len(b))
+	}
+}

@@ -39,10 +39,10 @@ func main() {
 	defer stop()
 
 	store := cache.NewMemoryStore()
-	client := tse.NewClient(cfg.TSEBaseURL, 15*time.Second)
+	client := tse.NewClient(cfg.TSEBaseURL, 8*time.Second)
 	go startPolling(ctx, log, cfg, client, store, abroad)
 
-	limiter := middlewares.NewRateLimiter(20, 40, cfg.TrustCloudflare)
+	limiter := middlewares.NewRateLimiter(30, 60, cfg.TrustCloudflare)
 	limiter.StartCleanup(time.Minute, ctx.Done())
 
 	srv := &http.Server{
@@ -71,27 +71,33 @@ func main() {
 	log.Info("stopped")
 }
 
-// startPolling loads the TSE municipality catalog (retrying until it works)
-// and then runs the poller until ctx ends.
+// startPolling starts the fast cycle right away and the municipality sweep as
+// soon as a catalog is known: the TSE one, or the bundled snapshot if the TSE
+// does not answer at boot.
 func startPolling(ctx context.Context, log *slog.Logger, cfg *config.Config, client *tse.Client,
 	store *cache.MemoryStore, abroad []entities.AbroadCity) {
-	var catalog []entities.Municipality
-	for catalog == nil {
-		body, _, err := client.Fetch(ctx, catalogPath)
-		if err == nil {
-			catalog, err = tse.ParseCatalog(body)
-		}
-		if err != nil {
-			log.Warn("load catalog, retrying", "err", err)
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(10 * time.Second):
-			}
+	poller := services.NewPoller(client, store, nil, abroad, services.PollerOptions{
+		FastInterval: cfg.FastInterval, MunConcurrency: cfg.MunConcurrency, Logger: log, Parse: tse.ParseResult,
+	})
+	poller.SetCatalog(loadCatalog(ctx, log, client))
+	poller.Run(ctx)
+}
+
+func loadCatalog(ctx context.Context, log *slog.Logger, client *tse.Client) []entities.Municipality {
+	fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	body, _, err := client.Fetch(fetchCtx, catalogPath)
+	if err == nil {
+		if cat, perr := tse.ParseCatalog(body); perr == nil {
+			log.Info("catalog loaded from TSE", "entries", len(cat))
+			return cat
 		}
 	}
-	log.Info("catalog loaded", "entries", len(catalog))
-	services.NewPoller(client, store, catalog, abroad, services.PollerOptions{
-		FastInterval: cfg.FastInterval, MunConcurrency: cfg.MunConcurrency, Logger: log, Parse: tse.ParseResult,
-	}).Run(ctx)
+	cat, perr := tse.ParseCatalog(assets.FallbackCatalog())
+	if perr != nil {
+		log.Error("bundled catalog unreadable", "err", perr)
+		return nil
+	}
+	log.Warn("TSE catalog unavailable, using bundled snapshot", "err", err, "entries", len(cat))
+	return cat
 }

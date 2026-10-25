@@ -73,6 +73,9 @@ describe('split', () => {
     expect(leaderSide(area(40, 60))).toBe('R');
     expect(leaderSide(area(0, 0))).toBe('X');
   });
+  it('an exact tie has no leader', () => {
+    expect(leaderSide(area(50, 50))).toBe('X');
+  });
 });
 
 describe('format', () => {

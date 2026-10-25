@@ -62,7 +62,7 @@ export class ResultsCard {
       const mine = s === null ? null : n === 13 ? s : 1 - s;
       row.querySelector('.pc')!.textContent = mine === null ? '–' : formatPct(mine);
       row.querySelector('.vt')!.textContent = r?.released ? `${formatInt(n === 13 ? r.l : r.f)} ${t('results_votes')}` : '';
-      row.querySelector('.lead')!.toggleAttribute('hidden', mine === null || mine < 0.5 || (mine === 0.5 && n === 22));
+      row.querySelector('.lead')!.toggleAttribute('hidden', mine === null || mine <= 0.5);
     }
     (this.el.querySelector('.sl') as HTMLElement).style.flexGrow = String(s ?? 0.5);
     (this.el.querySelector('.sf') as HTMLElement).style.flexGrow = String(s === null ? 0.5 : 1 - s);

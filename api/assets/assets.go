@@ -12,6 +12,15 @@ import (
 //go:embed abroad-cities.json
 var abroadCitiesJSON []byte
 
+// catalog-fallback.json is a snapshot of the TSE municipality catalog
+// (config/mun-e006258-cm.json), used when the TSE is unreachable at boot.
+//
+//go:embed catalog-fallback.json
+var catalogFallbackJSON []byte
+
+// FallbackCatalog returns the bundled TSE municipality catalog.
+func FallbackCatalog() []byte { return catalogFallbackJSON }
+
 // AbroadCities returns the abroad city -> country table.
 func AbroadCities() ([]entities.AbroadCity, error) { return parseAbroadCities(abroadCitiesJSON) }
 

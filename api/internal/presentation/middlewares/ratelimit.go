@@ -11,16 +11,19 @@ import (
 )
 
 // ClientIP returns the visitor IP. Behind Cloudflare (trustCloudflare) it is
-// CF-Connecting-IP; otherwise the first X-Forwarded-For hop set by the
-// Coolify proxy; otherwise the connection address.
+// CF-Connecting-IP only. Otherwise it is the rightmost X-Forwarded-For entry,
+// the one appended by our own proxy (entries to its left are client-supplied
+// and can be forged), falling back to the connection address.
 func ClientIP(r *http.Request, trustCloudflare bool) string {
 	if trustCloudflare {
 		if ip := strings.TrimSpace(r.Header.Get("CF-Connecting-IP")); ip != "" {
 			return ip
 		}
-	}
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return strings.TrimSpace(strings.Split(xff, ",")[0])
+	} else if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		parts := strings.Split(xff, ",")
+		if ip := strings.TrimSpace(parts[len(parts)-1]); ip != "" {
+			return ip
+		}
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -34,25 +37,35 @@ type visitor struct {
 	lastSeen time.Time
 }
 
+// defaultMaxVisitors caps the tracked IPs so a flood of distinct addresses
+// cannot exhaust memory; past the cap new IPs are let through (fail open).
+const defaultMaxVisitors = 100_000
+
 // RateLimiter is a per-IP token bucket.
 type RateLimiter struct {
 	rps             rate.Limit
 	burst           int
 	trustCloudflare bool
+	maxVisitors     int
 	mu              sync.Mutex
 	visitors        map[string]*visitor
 }
 
 // NewRateLimiter allows rps requests per second per IP with the given burst.
 func NewRateLimiter(rps float64, burst int, trustCloudflare bool) *RateLimiter {
-	return &RateLimiter{rps: rate.Limit(rps), burst: burst, trustCloudflare: trustCloudflare, visitors: map[string]*visitor{}}
+	return &RateLimiter{rps: rate.Limit(rps), burst: burst, trustCloudflare: trustCloudflare,
+		maxVisitors: defaultMaxVisitors, visitors: map[string]*visitor{}}
 }
 
+// limiter returns the bucket of ip, or nil when the table is full.
 func (rl *RateLimiter) limiter(ip string) *rate.Limiter {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 	v, ok := rl.visitors[ip]
 	if !ok {
+		if len(rl.visitors) >= rl.maxVisitors {
+			return nil
+		}
 		v = &visitor{limiter: rate.NewLimiter(rl.rps, rl.burst)}
 		rl.visitors[ip] = v
 	}
@@ -96,7 +109,7 @@ func (rl *RateLimiter) StartCleanup(interval time.Duration, stop <-chan struct{}
 // Middleware rejects requests over the limit with 429.
 func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !rl.limiter(ClientIP(r, rl.trustCloudflare)).Allow() {
+		if l := rl.limiter(ClientIP(r, rl.trustCloudflare)); l != nil && !l.Allow() {
 			w.Header().Set("Retry-After", "1")
 			http.Error(w, "too many requests", http.StatusTooManyRequests)
 			return

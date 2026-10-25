@@ -4,6 +4,7 @@ import { setLocale } from '../i18n';
 import { AdSlot } from './ad-slot';
 import { describeScope, type ScopeData } from './scope';
 import { ResultsCard } from './results-card';
+import { isStale } from './staleness';
 
 const r = (l: number, f: number, released = true, extra: Partial<AreaResult> = {}): AreaResult => ({
   el: 1000, comp: 800, abst: 200, vv: l + f, vb: 10, vn: 20, l, f, st: 5, ts: 10, dg: '25/10/2026', hg: '17:30:00', released, ...extra,
@@ -131,5 +132,33 @@ describe('AdSlot', () => {
     new AdSlot(el, 'results').render({ ads: { ...config.ads, adsenseClient: 'ca-pub-1', slotMobile: '123' } });
     expect(el.querySelector('ins')).toBeNull();
     expect(el.querySelector('a')).not.toBeNull();
+  });
+});
+
+describe('ResultsCard tie', () => {
+  it('shows no leader on an exact tie', () => {
+    const el = document.createElement('div');
+    new ResultsCard(el).render({ crumb: '', title: 'x', sub: '', result: r(500, 500) }, summary.candidates, false, '');
+    expect(el.querySelector('[data-cand="13"] .lead')?.hasAttribute('hidden')).toBe(true);
+    expect(el.querySelector('[data-cand="22"] .lead')?.hasAttribute('hidden')).toBe(true);
+  });
+});
+
+describe('isStale', () => {
+  const now = Date.parse('2026-10-25T20:31:00Z');
+  it('fresh data with no failures is not stale', () => {
+    expect(isStale(summary, 0, now)).toBe(false);
+  });
+  it('stale when the API flagged it', () => {
+    expect(isStale({ ...summary, stale: true }, 0, now)).toBe(true);
+  });
+  it('stale after two failed polls', () => {
+    expect(isStale(summary, 2, now)).toBe(true);
+  });
+  it('stale when our data is older than two minutes', () => {
+    expect(isStale(summary, 0, Date.parse('2026-10-25T20:33:01Z'))).toBe(true);
+  });
+  it('no summary is not reported as stale', () => {
+    expect(isStale(null, 5, now)).toBe(false);
   });
 });

@@ -70,7 +70,7 @@ func TestRoutes_AdsenseEnabled(t *testing.T) {
 func TestRoutes_RateLimitOnlyOnAPI(t *testing.T) {
 	h, _ := newRouter(t, config.Config{})
 	var apiLimited, staticLimited bool
-	for i := 0; i < 60; i++ {
+	for i := 0; i < 100; i++ {
 		if get(h, "/api/v1/config").Code == http.StatusTooManyRequests {
 			apiLimited = true
 		}

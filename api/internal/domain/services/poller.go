@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -39,6 +40,8 @@ type PollerOptions struct {
 	// UFs defaults to AllUFs.
 	UFs    []string
 	Logger *slog.Logger
+	// CycleTimeout bounds one fast cycle so a hanging TSE cannot stall refreshes (default 25s).
+	CycleTimeout time.Duration
 	// Parse decodes one TSE result file (injected from infra to keep the domain clean).
 	Parse func([]byte) (entities.AreaResult, []entities.Candidate, error)
 }
@@ -73,15 +76,28 @@ func NewPoller(src repositories.ResultSource, store repositories.ResultStore, ca
 	if opt.Logger == nil {
 		opt.Logger = slog.Default()
 	}
+	if opt.CycleTimeout <= 0 {
+		opt.CycleTimeout = 25 * time.Second
+	}
+	p := &Poller{src: src, store: store, abroad: abroad, opt: opt,
+		ufs: map[string]entities.AreaResult{}, cities: map[string]entities.AreaResult{},
+		munResults: map[string]map[string]entities.AreaResult{}}
+	p.SetCatalog(cat)
+	return p
+}
+
+// SetCatalog sets the municipality catalog swept by SweepMunicipalitiesOnce.
+// The fast cycle does not need it, so the summary is served before it is known.
+func (p *Poller) SetCatalog(cat []entities.Municipality) {
 	munis := map[string][]entities.Municipality{}
 	for _, m := range cat {
 		if m.UF != "zz" && m.IBGECode != "" {
 			munis[m.UF] = append(munis[m.UF], m)
 		}
 	}
-	return &Poller{src: src, store: store, munis: munis, abroad: abroad, opt: opt,
-		ufs: map[string]entities.AreaResult{}, cities: map[string]entities.AreaResult{},
-		munResults: map[string]map[string]entities.AreaResult{}}
+	p.mu.Lock()
+	p.munis = munis
+	p.mu.Unlock()
 }
 
 // Run polls until ctx is canceled: the fast cycle on a ticker and the
@@ -109,12 +125,15 @@ func (p *Poller) Run(ctx context.Context) {
 }
 
 func (p *Poller) loop(ctx context.Context, step func()) {
+	// a ticker keeps the cadence: a slow cycle does not push the next one further out
+	t := time.NewTicker(p.opt.FastInterval)
+	defer t.Stop()
 	for {
 		step()
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(p.opt.FastInterval):
+		case <-t.C:
 		}
 	}
 }
@@ -156,15 +175,29 @@ func (p *Poller) fetchAll(ctx context.Context, paths map[string]string, limit in
 // RunFastOnce refreshes Brazil, the states, the abroad total and the abroad
 // cities, then publishes a new summary.
 func (p *Poller) RunFastOnce(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, p.opt.CycleTimeout)
+	defer cancel()
+
+	// phase 1: Brazil, states and abroad total — published as soon as they arrive
 	paths := map[string]string{"br": brPath(), "uf:zz": ufPath("zz")}
 	for _, uf := range p.opt.UFs {
 		paths["uf:"+uf] = ufPath(uf)
 	}
-	for _, c := range p.abroad {
-		paths["city:"+c.Code] = munPath("zz", c.Code)
+	if err := p.publish(p.fetchAll(ctx, paths, fastConcurrency), len(paths)); err != nil {
+		return err
 	}
-	results := p.fetchAll(ctx, paths, fastConcurrency)
 
+	// phase 2: abroad cities (countries are built from them)
+	cityPaths := make(map[string]string, len(p.abroad))
+	for _, c := range p.abroad {
+		cityPaths["city:"+c.Code] = munPath("zz", c.Code)
+	}
+	return p.publish(p.fetchAll(ctx, cityPaths, fastConcurrency), len(cityPaths))
+}
+
+// publish merges fetched files into the last known state and stores a new
+// summary. Without the BR file it only counts a failure.
+func (p *Poller) publish(results []fetched, total int) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -182,22 +215,31 @@ func (p *Poller) RunFastOnce(ctx context.Context) error {
 			br = &results[i]
 		case f.key == "uf:zz":
 			zz = f.res
-		case len(f.key) > 5 && f.key[:5] == "city:":
+		case strings.HasPrefix(f.key, "city:"):
 			p.cities[f.key[5:]] = f.res
 		default:
 			p.ufs[f.key[3:]] = f.res
 		}
 	}
 
+	isCityPhase := total > 0 && len(results) > 0 && strings.HasPrefix(results[0].key, "city:")
+	if br == nil && isCityPhase {
+		if !p.hasLast {
+			return nil
+		}
+		br = &fetched{res: p.last.BR, cand: p.last.Candidates}
+	}
 	if br == nil {
 		p.failures++
 		if p.hasLast && p.failures >= staleAfter && !p.last.Stale {
 			p.last.Stale = true
 			p.store.SetSummary(p.last)
 		}
-		return fmt.Errorf("brazil total unavailable (%d/%d files failed)", failed, len(paths))
+		return fmt.Errorf("brazil total unavailable (%d/%d files failed)", failed, total)
 	}
-	p.failures = 0
+	if !isCityPhase {
+		p.failures = 0
+	}
 	if zz == (entities.AreaResult{}) && p.hasLast {
 		zz = p.last.ZZ
 	}
@@ -216,8 +258,10 @@ func (p *Poller) RunFastOnce(ctx context.Context) error {
 	}
 
 	now := time.Now().UTC()
+	stale := isCityPhase && p.last.Stale
 	p.last = entities.Snapshot{
 		UpdatedAt:  now,
+		Stale:      stale,
 		Candidates: br.cand,
 		BR:         br.res,
 		BRUfsSum:   usecases.SumResults(parts...),
@@ -238,7 +282,9 @@ func (p *Poller) SweepMunicipalitiesOnce(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		p.mu.Lock()
 		list := p.munis[uf]
+		p.mu.Unlock()
 		if len(list) == 0 {
 			continue
 		}

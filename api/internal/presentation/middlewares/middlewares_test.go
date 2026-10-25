@@ -49,9 +49,10 @@ func TestClientIP(t *testing.T) {
 	if got := ClientIP(r, false); got != "10.0.0.9" {
 		t.Errorf("RemoteAddr ip = %s", got)
 	}
-	r.Header.Set("X-Forwarded-For", "203.0.113.7, 10.0.0.2")
+	// the client can forge the left entries; the rightmost one is added by our proxy
+	r.Header.Set("X-Forwarded-For", "6.6.6.6, 203.0.113.7")
 	if got := ClientIP(r, false); got != "203.0.113.7" {
-		t.Errorf("XFF ip = %s", got)
+		t.Errorf("XFF ip = %s, want rightmost", got)
 	}
 	r.Header.Set("CF-Connecting-IP", "198.51.100.4")
 	if got := ClientIP(r, false); got != "203.0.113.7" {
@@ -59,6 +60,10 @@ func TestClientIP(t *testing.T) {
 	}
 	if got := ClientIP(r, true); got != "198.51.100.4" {
 		t.Errorf("CF ip = %s", got)
+	}
+	r.Header.Del("CF-Connecting-IP")
+	if got := ClientIP(r, true); got != "10.0.0.9" {
+		t.Errorf("with Cloudflare trusted, XFF must be ignored; got %s", got)
 	}
 	r2 := httptest.NewRequest("GET", "/", nil)
 	r2.RemoteAddr = "garbage"
@@ -124,5 +129,23 @@ func TestCORS(t *testing.T) {
 	h.ServeHTTP(rec, r)
 	if rec.Code != http.StatusNoContent {
 		t.Errorf("preflight = %d", rec.Code)
+	}
+}
+
+func TestRateLimit_CapFailsOpen(t *testing.T) {
+	rl := NewRateLimiter(1, 1, false)
+	rl.maxVisitors = 2
+	h := rl.Middleware(okHandler)
+	for i, ip := range []string{"192.0.2.1", "192.0.2.2", "192.0.2.3", "192.0.2.3", "192.0.2.3"} {
+		r := httptest.NewRequest("GET", "/", nil)
+		r.RemoteAddr = ip + ":1"
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		if i >= 2 && rec.Code != http.StatusOK {
+			t.Errorf("request %d from new IP over the cap = %d, want fail-open 200", i, rec.Code)
+		}
+	}
+	if n := rl.size(); n > 2 {
+		t.Errorf("visitors = %d, want capped at 2", n)
 	}
 }

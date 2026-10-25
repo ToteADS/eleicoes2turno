@@ -15,8 +15,8 @@ import (
 
 // Per-IP API limits. A page load makes ~3 API calls, then one every 30 s.
 const (
-	apiRPS   = 20
-	apiBurst = 40
+	apiRPS   = 30
+	apiBurst = 60
 )
 
 // Deps are the router's dependencies.

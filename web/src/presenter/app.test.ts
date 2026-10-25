@@ -90,6 +90,31 @@ describe('app', () => {
     app.dispose();
   });
 
+  it('still shows results when the globe cannot start (no WebGL)', async () => {
+    const globe = new FakeGlobe();
+    globe.mount = () => Promise.reject(new Error('WebGL not supported'));
+    const app = await createApp(deps(globe, []));
+    expect(document.querySelector('.scope')?.textContent).toBe('Todos os países');
+    expect(document.body.textContent).toContain('Globo indisponível');
+    app.dispose();
+  });
+
+  it('a failed state map clears the previous state instead of keeping it', async () => {
+    const globe = new FakeGlobe();
+    const d = deps(globe, []);
+    let fail = false;
+    d.geo.municipalities = () => (fail ? Promise.reject(new Error('404')) : Promise.resolve(munis));
+    const app = await createApp(d);
+    globe.pick!({ kind: 'uf', uf: 'BA' });
+    await flush();
+    fail = true;
+    globe.pick!({ kind: 'uf', uf: 'SP' });
+    await flush();
+    expect(globe.views.at(-1)).toEqual({ kind: 'uf', uf: 'SP' });
+    expect(document.querySelectorAll('#cityList option')).toHaveLength(0);
+    app.dispose();
+  });
+
   it('picking a municipality selects the city', async () => {
     const globe = new FakeGlobe();
     const app = await createApp(deps(globe, []));

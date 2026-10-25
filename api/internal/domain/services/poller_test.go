@@ -213,3 +213,47 @@ func TestPoller_RunStopsOnCancel(t *testing.T) {
 		t.Error("Run should have swept municipalities")
 	}
 }
+
+// blockingSource never answers until the request context ends (a hanging TSE).
+type blockingSource struct{}
+
+func (blockingSource) Fetch(ctx context.Context, _ string) ([]byte, bool, error) {
+	<-ctx.Done()
+	return nil, false, ctx.Err()
+}
+
+func TestPoller_FastCycleHasDeadline(t *testing.T) {
+	_, cat, abroad := newFixture()
+	p := NewPoller(blockingSource{}, cache.NewMemoryStore(), cat, abroad, PollerOptions{
+		FastInterval: time.Second, CycleTimeout: 50 * time.Millisecond, UFs: []string{"ba"}, Parse: tse.ParseResult,
+	})
+	start := time.Now()
+	if err := p.RunFastOnce(context.Background()); err == nil {
+		t.Fatal("expected error from hanging source")
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Errorf("fast cycle took %v, want it bounded by CycleTimeout", d)
+	}
+}
+
+func TestPoller_SummaryWithoutCatalog(t *testing.T) {
+	src, _, abroad := newFixture()
+	store := cache.NewMemoryStore()
+	p := newTestPoller(src, nil, abroad, store)
+	if err := p.RunFastOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.SweepMunicipalitiesOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, ok := store.Payload(repositories.KeySummary); !ok {
+		t.Fatal("summary must be published before the catalog is known")
+	}
+	p.SetCatalog([]entities.Municipality{{UF: "ba", TSECode: "33030", IBGECode: "2900207"}})
+	if err := p.SweepMunicipalitiesOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, ok := store.Payload(repositories.KeyMunicipalities("ba")); !ok {
+		t.Error("sweep should run once the catalog is set")
+	}
+}

@@ -7,7 +7,9 @@ import { AdSlot } from './ad-slot';
 import { FiltersCard } from './filters-card';
 import { GlobeControls } from './globe-controls';
 import { ResultsCard } from './results-card';
+import { NullGlobe } from './null-globe';
 import { describeScope } from './scope';
+import { isStale } from './staleness';
 import { Tooltip } from './tooltip';
 
 export interface AppDeps {
@@ -59,7 +61,8 @@ function shell(root: HTMLElement): void {
     </div>
     <nav class="controls" aria-label="Globo"></nav>
     <footer class="foot"><span>${t('globe_hint')}</span><span>${t('footer_source')} · Natural Earth · IBGE · <a href="https://github.com/ToteADS/eleicoes2turno" target="_blank" rel="noopener">${t('footer_code')}</a></span></footer>
-    <div class="tip" role="tooltip"></div>`;
+    <div class="tip" role="tooltip"></div>
+    <p class="globe-note" hidden>${t('status_globe_unavailable')}</p>`;
 }
 
 export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
@@ -75,10 +78,15 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
   let muniGeo: AreaCollection | null = null;
   let abroadResults: Record<string, AreaResult> = {};
 
+  const emptyAreas = (): AreaCollection => ({ type: 'FeatureCollection', features: [] });
   const [config, states, world, abroadCities] = await Promise.all([
-    d.api.config().catch(() => DEFAULT_CONFIG), d.geo.states(), d.geo.world(), d.geo.abroadCities(),
+    d.api.config().catch(() => DEFAULT_CONFIG),
+    d.geo.states().catch(() => emptyAreas()),
+    d.geo.world().catch(() => emptyAreas()),
+    d.geo.abroadCities().catch(() => [] as AbroadCity[]),
   ]);
-  summary = await d.api.summary().catch(() => null);
+  let failedPolls = 0;
+  summary = await d.api.summary().catch(() => { failedPolls++; return null; });
   abroadResults = (await d.api.abroadCities().catch(() => null))?.items ?? {};
 
   const stateNames = Object.fromEntries(states.features.map((f) => [String(f.properties?.uf), String(f.properties?.name)]));
@@ -88,12 +96,19 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
   new AdSlot($('.ad-results'), 'results').render(config);
   new AdSlot($('.ad-mobile'), 'mobile').render(config);
 
-  await d.globe.mount($('#globe'));
+  let globe = d.globe;
+  try {
+    await globe.mount($('#globe'));
+  } catch (err) {
+    console.error('globe unavailable', err);
+    globe = new NullGlobe();
+    $('.globe-note').hidden = false;
+  }
   const paintGlobe = () => {
-    d.globe.setStates(states, summary?.ufs ?? {});
-    d.globe.setWorld(world, summary?.countries ?? {});
-    d.globe.setAbroadCities(abroadCities, abroadResults);
-    d.globe.setMunicipalities(filters.uf, muniGeo, municipalities);
+    globe.setStates(states, summary?.ufs ?? {});
+    globe.setWorld(world, summary?.countries ?? {});
+    globe.setAbroadCities(abroadCities, abroadResults);
+    globe.setMunicipalities(filters.uf, muniGeo, municipalities);
   };
 
   const muniNames = () => Object.fromEntries((muniGeo?.features ?? []).map((f) => [String(f.properties?.id), String(f.properties?.name)]));
@@ -114,7 +129,7 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
       municipalityCount: muniGeo?.features.length ?? 0, abroadResults,
     });
     const staleTime = summary ? new Date(summary.updatedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '';
-    resultsCard.render(scope, summary?.candidates ?? [], summary?.stale ?? false, staleTime);
+    resultsCard.render(scope, summary?.candidates ?? [], isStale(summary, failedPolls), staleTime);
     updatePadding();
   };
 
@@ -124,9 +139,11 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
       municipalities = {};
       return true;
     }
-    const got = await latest('mun', () => Promise.all([d.geo.municipalities(uf), d.api.municipalities(uf).catch(() => null)]));
-    if (!got) return false; // a newer selection won
-    [muniGeo, municipalities] = [got[0], got[1]?.items ?? {}];
+    const got = await latest('mun', () =>
+      Promise.all([d.geo.municipalities(uf), d.api.municipalities(uf).catch(() => null)]).catch(() => null));
+    if (got === undefined) return false; // a newer selection won
+    // on failure clear the previous state's data rather than showing it under the new state
+    [muniGeo, municipalities] = got ? [got[0], got[1]?.items ?? {}] : [null, {}];
     return true;
   };
 
@@ -136,14 +153,14 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
     render();
     if (ufChanged && !(await loadMunicipalities(next.uf))) return;
     if (next !== filters) return; // superseded while loading
-    d.globe.setMunicipalities(filters.uf, muniGeo, municipalities);
-    d.globe.focus(viewFor(filters));
+    globe.setMunicipalities(filters.uf, muniGeo, municipalities);
+    globe.focus(viewFor(filters));
     filtersCard.close();
     render();
   };
   filtersCard.onChange((s) => void apply(s));
 
-  d.globe.onPick((p: GlobePick) => {
+  globe.onPick((p: GlobePick) => {
     if (p.kind === 'uf') void apply(setUf(filters, p.uf));
     if (p.kind === 'municipality' && filters.uf) void apply(setCity(filters, p.id));
     if (p.kind === 'country') void apply(setCountry(filters, p.iso));
@@ -152,7 +169,7 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
       if (c) void apply(setCity(setCountry(filters, c.iso), c.cd));
     }
   });
-  d.globe.onHover((h) => {
+  globe.onHover((h) => {
     if (!h) return tooltip.hide();
     if (h.kind === 'uf') tooltip.show(h.x, h.y, stateNames[h.uf] ?? h.uf, summary?.ufs[h.uf.toLowerCase()]);
     if (h.kind === 'municipality') tooltip.show(h.x, h.y, muniNames()[h.id] ?? h.id, municipalities[h.id]);
@@ -162,7 +179,7 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
       tooltip.show(h.x, h.y, c ? `${c.nm} · ${c.country}` : h.cd, abroadResults[h.cd]);
     }
   });
-  new GlobeControls($('.controls'), d.globe, () => void apply(initialFilters()));
+  new GlobeControls($('.controls'), globe, () => void apply(initialFilters()));
 
   // keep flights clear of the floating cards
   function updatePadding() {
@@ -171,11 +188,11 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
     const dock = $('#dock').getBoundingClientRect();
     const m = 24;
     if (isWide()) {
-      d.globe.setPadding({ top: top.bottom + m, bottom: m + 30, left: m + 56, right: Math.max(m, window.innerWidth - side.left + m) });
+      globe.setPadding({ top: top.bottom + m, bottom: m + 30, left: m + 56, right: Math.max(m, window.innerWidth - side.left + m) });
     } else {
       const dockH = Math.max(0, window.innerHeight - dock.top);
       d.root.style.setProperty('--dock-h', `${dockH}px`);
-      d.globe.setPadding({ top: top.bottom + m, bottom: Math.max(m, dockH + m), left: m, right: m + 52 });
+      globe.setPadding({ top: top.bottom + m, bottom: Math.max(m, dockH + m), left: m, right: m + 52 });
     }
   }
   const handle = $<HTMLButtonElement>('.sheet-handle');
@@ -191,7 +208,7 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
 
   paintGlobe();
   render();
-  d.globe.focus(viewFor(filters));
+  globe.focus(viewFor(filters));
 
   const poll = async () => {
     if (document.visibilityState === 'hidden') return;
@@ -200,7 +217,12 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
       d.api.abroadCities().catch(() => null),
       filters.uf ? d.api.municipalities(filters.uf).catch(() => null) : Promise.resolve(null),
     ]);
-    if (s) summary = s;
+    if (s) {
+      summary = s;
+      failedPolls = 0;
+    } else {
+      failedPolls++;
+    }
     if (abroad) abroadResults = abroad.items;
     if (muni && filters.uf && muni.uf === filters.uf.toLowerCase()) municipalities = muni.items;
     paintGlobe();
