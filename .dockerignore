@@ -1,0 +1,10 @@
+**/node_modules
+**/dist
+**/coverage
+.git
+.superpowers
+.impeccable
+data/.cache
+docs
+*.md
+.env
