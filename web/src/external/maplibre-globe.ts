@@ -1,9 +1,11 @@
 import bbox from '@turf/bbox';
 import type { Feature, FeatureCollection, MultiPolygon, Point, Polygon } from 'geojson';
-import { leaderSide, share, splitFeature } from '../domain/split';
+import { splitFeature } from '../domain/split';
 import { REGION_OF } from '../domain/filters';
 import type { AbroadCity } from '../domain/types';
-import type { AreaCollection, AreaPaint, GlobeHover, GlobePick, GlobeRenderer, GlobeView, Padding, SolidFill } from '../infra/globe';
+import { browserClock, tween, type FrameClock, type Tween } from '../infra/animation';
+import type { AreaCollection, AreaPaint, GlobeHover, GlobePick, GlobeRenderer, GlobeView, Padding, PaintOptions, SolidFill } from '../infra/globe';
+import { BLUE, colorProps, GHOST, leadProps, lookOf, mixLook, RED, sameLook, type AreaLook } from './area-look';
 import { IdleRotation } from './rotation';
 
 /** The slice of the MapLibre Map API this adapter uses (keeps the library swappable and testable). */
@@ -27,13 +29,19 @@ export interface MapLike {
   queryRenderedFeatures(point: unknown, options: Record<string, unknown>): unknown[];
 }
 
-const RED = '#d7262d';
-const BLUE = '#1f5fe0';
-const GHOST = '#e3e6eb';
 const HOME = '#d9dde3';
 const BRAZIL_CENTER: [number, number] = [-52, -14];
 const FLIGHT_MS = 2600;
 const PICK_LAYERS = ['cities', 'muni-fill', 'br-fill', 'world-fill'];
+
+/** Colour tween of a live update. MapLibre does not transition data-driven colours, so we redraw. */
+export const GLOBE_TWEEN_MS = 700;
+/** a redraw costing more than this (ms, main thread) ends the tween at once: phones first */
+export const MAX_FRAME_MS = 24;
+/** more changed areas than this skip the tween (thousands of redraw-heavy pieces) */
+export const MAX_TWEEN_AREAS = 1200;
+/** ms between redraws: ~30 fps for cheap redraws, fewer for costly ones */
+export const frameInterval = (cost: number): number => Math.min(160, Math.max(33, cost * 4));
 
 // L/R = the two halves of a second-round split; W = whole area in its own color (first round)
 const sideColor = ['match', ['get', 'side'], 'L', RED, 'R', BLUE, 'W', ['get', 'color'], GHOST];
@@ -42,14 +50,38 @@ const empty = (): FeatureCollection => ({ type: 'FeatureCollection', features: [
 const fc = <G extends Polygon | MultiPolygon | Point>(features: Feature<G>[]): FeatureCollection<G> => ({ type: 'FeatureCollection', features });
 type Area = Feature<Polygon | MultiPolygon>;
 
-const isSolid = (p: AreaPaint | undefined): p is SolidFill => p !== undefined && 'fill' in p;
+const isSolid = (p: unknown): p is SolidFill => p !== undefined && p !== null && typeof p === 'object' && 'fill' in p;
 const solidProps = (p: SolidFill) => (p.fill ? { side: 'W', color: p.fill } : { side: 'X' });
 
-/** Cuts the area red × blue (second round) or keeps it whole in the winner's color (first round). */
-function paintArea(f: Area, paint: AreaPaint | undefined, props: Record<string, unknown>): Area[] {
-  if (isSolid(paint)) return [{ ...f, properties: { ...props, ...solidProps(paint) } }];
-  return splitFeature(f, share(paint), props);
+/** What one area is drawn with: a first-round solid fill, or a second-round red × blue look. */
+type Look = SolidFill | AreaLook;
+const toLook = (p: AreaPaint | undefined): Look => (isSolid(p) ? p : lookOf(p));
+
+/** Cuts the area at the look's share; the west part in its west colour, the east in its east colour. */
+function lookPieces(f: Area, look: AreaLook, props: Record<string, unknown>): Area[] {
+  if (look.share === null) return [{ ...f, properties: { ...props, ...leadProps(look) } }];
+  return splitFeature(f, look.share, props).map((p) => {
+    const side = p.properties?.side === 'L' ? 'L' : 'R';
+    return { ...p, properties: { ...p.properties, ...colorProps(side === 'L' ? look.west : look.east, side) } };
+  });
 }
+
+/** Cuts the area red × blue (second round) or keeps it whole in the winner's color (first round). */
+function paintArea(f: Area, look: Look, props: Record<string, unknown>): Area[] {
+  if (isSolid(look)) return [{ ...f, properties: { ...props, ...solidProps(look) } }];
+  return lookPieces(f, look, props);
+}
+
+type SourceId = 'world' | 'br' | 'muni' | 'cities';
+
+/** What a source shows now (one look per area of `of`), the pieces cut for each, and its running tween. */
+interface Drawn {
+  of?: object;
+  shown: Look[];
+  pieces: { look: Look; parts: Feature[] }[];
+  tween?: Tween;
+}
+const drawn = (): Drawn => ({ shown: [], pieces: [] });
 
 function polygons(f: Area): Area[] {
   const g = f.geometry;
@@ -87,8 +119,12 @@ export class MapLibreGlobe implements GlobeRenderer {
   private interactCbs: (() => void)[] = [];
   private spinAfterFlight = false;
   private selectedUf: string | null = null;
+  private drawn: Record<SourceId, Drawn> = { world: drawn(), br: drawn(), muni: drawn(), cities: drawn() };
+  private worldParts = new WeakMap<Area, { pieces: Area[]; crosses: boolean }>();
+  /** main-thread cost (ms) of the last tween redraws, for the performance check */
+  readonly frameCosts: number[] = [];
 
-  constructor(private readonly createMap: (el: HTMLElement) => MapLike) {}
+  constructor(private readonly createMap: (el: HTMLElement) => MapLike, private readonly clock: FrameClock = browserClock) {}
 
   async mount(el: HTMLElement): Promise<void> {
     this.map = this.createMap(el);
@@ -102,77 +138,121 @@ export class MapLibreGlobe implements GlobeRenderer {
     this.padding = p;
   }
 
-  setWorld(world: AreaCollection, countries: Record<string, AreaPaint>): void {
-    const parts: Area[] = [];
+  setWorld(world: AreaCollection, countries: Record<string, AreaPaint>, opts: PaintOptions = {}): void {
     this.world.clear();
     this.worldShapes.clear();
-    for (const f of world.features) {
-      const iso = Number(f.properties?.iso);
-      this.world.set(iso, f);
-      this.worldShapes.add(iso);
-      const r = countries[String(iso)];
-      if (isSolid(r)) {
-        parts.push({ ...f, properties: { iso, ...solidProps(r) } });
-        continue;
-      }
-      const s = share(r);
-      if (s === null) {
-        parts.push({ ...f, properties: { iso, side: 'X' } });
-        continue;
-      }
-      const pieces = polygons(f).sort((a, b) => bboxArea(b) - bboxArea(a));
-      const [minX, , maxX] = bbox(pieces[0]);
-      if (maxX - minX > 180) {
-        // crosses the antimeridian (Russia, Fiji): a split would smear around the globe
-        parts.push({ ...f, properties: { iso, side: leaderSide(r) } });
-        continue;
-      }
-      parts.push(...splitFeature(pieces[0], s, { iso }));
-      // overseas pieces (Alaska, French Guiana…) take the leader's color
-      for (const p of pieces.slice(1)) parts.push({ ...p, properties: { iso, side: leaderSide(r) } });
-    }
-    this.setData('world', fc(parts));
+    const isos = world.features.map((f) => Number(f.properties?.iso));
+    world.features.forEach((f, i) => {
+      this.world.set(isos[i], f);
+      this.worldShapes.add(isos[i]);
+    });
+    this.draw('world', world, world.features.length, (i) => toLook(countries[String(isos[i])]), (i, look) => this.countryPieces(world.features[i], isos[i], look), opts);
   }
 
-  setStates(states: AreaCollection, ufs: Record<string, AreaPaint>): void {
+  setStates(states: AreaCollection, ufs: Record<string, AreaPaint>, opts: PaintOptions = {}): void {
     this.states.clear();
-    const parts: Area[] = [];
-    for (const f of states.features) {
-      const uf = String(f.properties?.uf);
-      this.states.set(uf, f);
-      parts.push(...paintArea(f, ufs[uf.toLowerCase()], { uf }));
-    }
-    this.setData('br', fc(parts));
+    const list = states.features.map((f) => String(f.properties?.uf));
+    states.features.forEach((f, i) => this.states.set(list[i], f));
+    this.draw('br', states, list.length, (i) => toLook(ufs[list[i].toLowerCase()]), (i, look) => paintArea(states.features[i], look, { uf: list[i] }), opts);
     this.setData('brline', states);
   }
 
-  setMunicipalities(uf: string | null, geo: AreaCollection | null, items: Record<string, AreaPaint>): void {
+  setMunicipalities(uf: string | null, geo: AreaCollection | null, items: Record<string, AreaPaint>, opts: PaintOptions = {}): void {
     this.munis.clear();
     if (!uf || !geo) {
+      this.reset('muni');
       this.setData('muni', empty());
       this.setData('muniline', empty());
       return;
     }
-    const parts: Area[] = [];
-    for (const f of geo.features) {
-      const id = String(f.properties?.id);
-      this.munis.set(id, f);
-      parts.push(...paintArea(f, items[id], { id }));
-    }
-    this.setData('muni', fc(parts));
+    const ids = geo.features.map((f) => String(f.properties?.id));
+    geo.features.forEach((f, i) => this.munis.set(ids[i], f));
+    this.draw('muni', geo, ids.length, (i) => toLook(items[ids[i]]), (i, look) => paintArea(geo.features[i], look, { id: ids[i] }), opts);
     this.setData('muniline', geo);
   }
 
-  setAbroadCities(cities: AbroadCity[], items: Record<string, AreaPaint>): void {
+  setAbroadCities(cities: AbroadCity[], items: Record<string, AreaPaint>, opts: PaintOptions = {}): void {
     this.cities = new Map(cities.map((c) => [c.cd, c]));
-    this.setData('cities', fc(cities.map((c) => {
-      const r = items[c.cd];
-      return {
+    this.draw('cities', cities, cities.length, (i) => toLook(items[cities[i].cd]), (i, look) => {
+      const c = cities[i];
+      return [{
         type: 'Feature' as const,
         geometry: { type: 'Point' as const, coordinates: [c.lon, c.lat] },
-        properties: { cd: c.cd, iso: c.iso, el: r?.el ?? 0, ...(isSolid(r) ? solidProps(r) : { side: leaderSide(r) }) },
-      };
-    })));
+        properties: { cd: c.cd, iso: c.iso, el: items[c.cd]?.el ?? 0, ...(isSolid(look) ? solidProps(look) : leadProps(look)) },
+      }];
+    }, opts);
+  }
+
+  /** Overseas pieces (Alaska, French Guiana…) and countries across the antimeridian take the leader's colour. */
+  private countryPieces(f: Area, iso: number, look: Look): Feature[] {
+    if (isSolid(look)) return [{ ...f, properties: { iso, ...solidProps(look) } }];
+    if (look.share === null) return [{ ...f, properties: { iso, ...leadProps(look) } }];
+    let geo = this.worldParts.get(f);
+    if (!geo) {
+      const pieces = polygons(f).sort((a, b) => bboxArea(b) - bboxArea(a));
+      const [minX, , maxX] = bbox(pieces[0]);
+      geo = { pieces, crosses: maxX - minX > 180 };
+      this.worldParts.set(f, geo);
+    }
+    // crosses the antimeridian (Russia, Fiji): a split would smear around the globe
+    if (geo.crosses) return [{ ...f, properties: { iso, ...leadProps(look) } }];
+    return [...lookPieces(geo.pieces[0], look, { iso }), ...geo.pieces.slice(1).map((p) => ({ ...p, properties: { iso, ...leadProps(look) } }))];
+  }
+
+  /** Forgets what a source shows (another state, no state): nothing to tween from. */
+  private reset(id: SourceId): void {
+    this.drawn[id].tween?.cancel();
+    this.drawn[id] = drawn();
+  }
+
+  /**
+   * Draws the `count` areas of one source (`of` is their geometry). With `animate`, areas
+   * whose look changed tween from what is on screen to the new look (redrawing the source,
+   * throttled by what a redraw costs); everything else, and every call without `animate`,
+   * is drawn at once. Unchanged areas reuse the pieces already cut.
+   */
+  private draw(id: SourceId, of: object, count: number, target: (i: number) => Look, build: (i: number, look: Look) => Feature[], opts: PaintOptions): void {
+    if (this.drawn[id].of !== of) {
+      this.reset(id);
+      this.drawn[id].of = of;
+    }
+    const d = this.drawn[id];
+    d.tween?.cancel();
+    d.tween = undefined;
+    const from = d.shown;
+    const to = Array.from({ length: count }, (_, i) => target(i));
+    const paint = (looks: Look[]) => {
+      d.shown = looks;
+      const parts: Feature[] = [];
+      d.pieces = looks.map((look, i) => {
+        const cached = d.pieces[i];
+        const entry = cached && (cached.look === look || (!isSolid(look) && !isSolid(cached.look) && sameLook(cached.look, look)))
+          ? cached : { look, parts: build(i, look) };
+        parts.push(...entry.parts);
+        return entry;
+      });
+      this.setData(id, fc(parts as Area[]));
+    };
+    const changed = opts.animate && from.length === count
+      ? to.flatMap((b, i) => (!isSolid(from[i]) && !isSolid(b) && !sameLook(from[i] as AreaLook, b) ? [i] : []))
+      : [];
+    if (!changed.length || changed.length > MAX_TWEEN_AREAS) return paint(to);
+    let cost = 0;
+    d.tween = tween({
+      duration: GLOBE_TWEEN_MS,
+      clock: this.clock,
+      minInterval: () => frameInterval(cost),
+      frame: (e) => {
+        const t0 = this.clock.now();
+        const looks = [...to];
+        for (const i of changed) looks[i] = mixLook(from[i] as AreaLook, to[i] as AreaLook, e);
+        paint(looks);
+        cost = this.clock.now() - t0;
+        this.frameCosts.push(cost);
+        if (this.frameCosts.length > 200) this.frameCosts.shift();
+        if (cost > MAX_FRAME_MS && e < 1) d.tween?.finish();
+      },
+    });
   }
 
   focus(view: GlobeView): void {

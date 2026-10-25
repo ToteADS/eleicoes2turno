@@ -2,6 +2,7 @@ import { initialFilters, setCity, setCountry, setUf, type FilterState } from '..
 import type { PresenceDto } from '../domain/dtos/presence-dto';
 import { ranking, sumMulti } from '../domain/multi';
 import type { AbroadCity, AreaListResponse, AreaResult, MultiResult, Notice, PresenceAnswer, PublicConfig, Round, Round1Summary, Summary } from '../domain/types';
+import { prefersReducedMotion } from '../infra/animation';
 import { latest } from '../infra/api';
 import { tabId } from '../infra/tab-id';
 import type { AreaCollection, GlobePick, GlobeRenderer, GlobeView } from '../infra/globe';
@@ -153,16 +154,21 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
   }
   // first round: each area whole in its winner's color; second round: the red × blue split
   const fills = (items: Record<string, MultiResult>) => (r1 ? round1Fills(items, r1.candidates) : {});
-  const paintMunicipalities = () => globe.setMunicipalities(filters.uf, muniGeo, round === 1 ? fills(r1Munis) : municipalities);
-  const paintGlobe = () => {
-    globe.setStates(states, round === 1 ? fills(r1?.ufs ?? {}) : summary?.ufs ?? {});
-    globe.setWorld(world, round === 1 ? fills(r1?.countries ?? {}) : summary?.countries ?? {});
-    globe.setAbroadCities(abroadCities, round === 1 ? fills(r1Abroad) : abroadResults);
-    paintMunicipalities();
+  // animate = a poll brought new numbers for the view on screen (never on load, filter or round changes)
+  const paintMunicipalities = (animate = false) =>
+    globe.setMunicipalities(filters.uf, muniGeo, round === 1 ? fills(r1Munis) : municipalities, { animate });
+  const paintGlobe = (animate = false) => {
+    const opts = { animate };
+    globe.setStates(states, round === 1 ? fills(r1?.ufs ?? {}) : summary?.ufs ?? {}, opts);
+    globe.setWorld(world, round === 1 ? fills(r1?.countries ?? {}) : summary?.countries ?? {}, opts);
+    globe.setAbroadCities(abroadCities, round === 1 ? fills(r1Abroad) : abroadResults, opts);
+    paintMunicipalities(animate);
   };
+  // bumped by every filter or round change: a poll that started before one does not animate
+  let viewEpoch = 0;
 
   const muniNames = () => Object.fromEntries((muniGeo?.features ?? []).map((f) => [String(f.properties?.id), String(f.properties?.name)]));
-  const render = () => {
+  const render = (animate = false) => {
     const names = muniNames();
     const cities = filters.country === 'BR'
       ? Object.entries(names).map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
@@ -187,7 +193,7 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
       noticeBanner.render(bannerFor(notice, summary));
       const scope = describeScope(filters, { ...common, summary, municipalities, abroadResults });
       const staleTime = summary ? new Date(summary.updatedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '';
-      resultsCard.render(scope, summary?.candidates ?? [], isStale(summary, failedPolls), staleTime);
+      resultsCard.render(scope, summary?.candidates ?? [], isStale(summary, failedPolls), staleTime, animate);
     }
     updatePadding();
   };
@@ -215,6 +221,7 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
   const apply = async (next: FilterState) => {
     const ufChanged = next.uf !== filters.uf;
     filters = next;
+    viewEpoch++;
     render();
     if (ufChanged && !(await loadMunicipalities(next.uf))) return;
     if (next !== filters) return; // superseded while loading
@@ -228,6 +235,7 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
   // switching round keeps the filters and the camera; only the data and the colors change
   const switchRound = async (next: Round) => {
     round = next;
+    viewEpoch++;
     window.history.replaceState(window.history.state, '', roundUrl(window.location.href, next));
     render();
     if (next === 1 && !r1) await loadRound1();
@@ -300,6 +308,7 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
     if (round !== 2 || document.visibilityState === 'hidden') return; // the first round is final
     if (polling) return; // one poll at a time (timer + tab coming back)
     polling = true;
+    const epoch = viewEpoch;
     const [s, abroad, muni] = await Promise.all([
       d.api.summary().catch(() => null),
       d.api.abroadCities().catch(() => null),
@@ -315,8 +324,9 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
     }
     if (abroad) abroadResults = abroad.items;
     if (muni && filters.uf && muni.uf === filters.uf.toLowerCase()) municipalities = muni.items;
-    paintGlobe();
-    render();
+    const animate = epoch === viewEpoch && round === 2 && !prefersReducedMotion();
+    paintGlobe(animate);
+    render(animate);
   };
   const timer = window.setInterval(() => void poll(), d.pollMs ?? 30_000);
   // a tab coming back to the front refreshes right away instead of waiting for the next tick

@@ -1,6 +1,7 @@
 import type { AreaCollection } from '../infra/globe';
 import type { AreaResult } from '../domain/types';
-import { MapLibreGlobe, type MapLike } from './maplibre-globe';
+import { ManualClock } from '../testing/manual-clock';
+import { frameInterval, MAX_TWEEN_AREAS, MapLibreGlobe, type MapLike } from './maplibre-globe';
 
 class FakeMap {
   calls: { name: string; args: unknown[] }[] = [];
@@ -44,9 +45,9 @@ const square = (x: number, y: number, props: Record<string, unknown>) => ({
 const states: AreaCollection = { type: 'FeatureCollection', features: [square(-42, -13, { uf: 'BA', name: 'Bahia' })] };
 const released: AreaResult = { el: 1, comp: 1, abst: 0, vv: 1, vb: 0, vn: 0, l: 6, f: 4, st: 1, ts: 1, dg: '', hg: '', released: true };
 
-async function mounted() {
+async function mounted(clock?: ManualClock) {
   const fake = new FakeMap();
-  const globe = new MapLibreGlobe(() => fake as unknown as MapLike);
+  const globe = new MapLibreGlobe(() => fake as unknown as MapLike, clock);
   const p = globe.mount(document.createElement('div'));
   fake.fire('load');
   await p;
@@ -171,5 +172,187 @@ describe('MapLibreGlobe first round (solid fills)', () => {
     globe.focus({ kind: 'brazil', region: 'ALL' });
     const fly = fake.last('flyTo')!.args[0] as { zoom: number };
     expect(fly.zoom).toBeCloseTo(Math.log2((310 * 360) / (512 * 40)), 5);
+  });
+});
+
+describe('MapLibreGlobe live update tween', () => {
+  const at = (l: number, f: number): AreaResult => ({ ...released, l, f });
+  const japan: AreaCollection = { type: 'FeatureCollection', features: [square(138, 35, { iso: 392 }), { ...square(150, 35, { iso: 392 }), geometry: { type: 'MultiPolygon' as const, coordinates: [square(140, 40, {}).geometry.coordinates, square(160, 20, {}).geometry.coordinates] } }] };
+  const munis: AreaCollection = { type: 'FeatureCollection', features: [square(-42, -13, { id: '1' }), square(-41, -13, { id: '2' })] };
+  const tokyo = [{ cd: '30627', nm: 'Tóquio', country: 'Japão', iso: 392, lat: 35, lon: 139 }];
+  const brProps = (fake: FakeMap) => (fake.data.br as AreaCollection).features.map((f) => f.properties);
+  const westEdge = (fake: FakeMap) => {
+    const west = (fake.data.br as AreaCollection).features[0].geometry as { coordinates: number[][][] };
+    return Math.max(...west.coordinates[0].map((p) => p[0]));
+  };
+
+  it('without animate the new split is drawn at once', async () => {
+    const clock = new ManualClock();
+    const { fake, globe } = await mounted(clock);
+    globe.setStates(states, { ba: at(6, 4) });
+    globe.setStates(states, { ba: at(3, 7) });
+    expect(clock.pending).toBe(0);
+    expect(westEdge(fake)).toBeCloseTo(-41.7);
+  });
+
+  it('the first paint never animates (nothing on screen to tween from)', async () => {
+    const clock = new ManualClock();
+    const { fake, globe } = await mounted(clock);
+    globe.setStates(states, { ba: at(6, 4) }, { animate: true });
+    expect(clock.pending).toBe(0);
+    expect(brProps(fake)).toEqual([{ uf: 'BA', side: 'L' }, { uf: 'BA', side: 'R' }]);
+  });
+
+  it('slides the split line from the old share to the new one and ends on the resting sides', async () => {
+    const clock = new ManualClock();
+    const { fake, globe } = await mounted(clock);
+    globe.setStates(states, { ba: at(6, 4) });
+    globe.setStates(states, { ba: at(3, 7) }, { animate: true });
+    expect(westEdge(fake)).toBeCloseTo(-41.4); // old frame until the first animation frame
+    clock.step(100);
+    const mid = westEdge(fake);
+    expect(mid).toBeLessThan(-41.4);
+    expect(mid).toBeGreaterThan(-41.7);
+    clock.run(50);
+    expect(westEdge(fake)).toBeCloseTo(-41.7);
+    expect(brProps(fake)).toEqual([{ uf: 'BA', side: 'L' }, { uf: 'BA', side: 'R' }]);
+    expect(globe.frameCosts.length).toBeGreaterThan(1);
+  });
+
+  it('an area getting its first numbers fades in from grey', async () => {
+    const clock = new ManualClock();
+    const { fake, globe } = await mounted(clock);
+    globe.setStates(states, {});
+    expect(brProps(fake)).toEqual([{ uf: 'BA', side: 'X' }]);
+    globe.setStates(states, { ba: at(6, 4) }, { animate: true });
+    clock.step(100);
+    const mid = brProps(fake);
+    expect(mid.map((p) => p?.side)).toEqual(['W', 'W']);
+    expect(mid[0]?.color).not.toBe('#d7262d');
+    clock.run(50);
+    expect(brProps(fake)).toEqual([{ uf: 'BA', side: 'L' }, { uf: 'BA', side: 'R' }]);
+  });
+
+  it('only areas that changed are tweened; unchanged ones keep their pieces', async () => {
+    const clock = new ManualClock();
+    const { fake, globe } = await mounted(clock);
+    globe.setMunicipalities('BA', munis, { 1: at(6, 4), 2: at(5, 5) });
+    const before = (fake.data.muni as AreaCollection).features.slice(2);
+    globe.setMunicipalities('BA', munis, { 1: at(4, 6), 2: at(5, 5) }, { animate: true });
+    clock.step(100);
+    expect((fake.data.muni as AreaCollection).features.slice(2)).toEqual(before);
+    clock.run(50);
+  });
+
+  it('the same numbers again draw at once', async () => {
+    const clock = new ManualClock();
+    const { globe } = await mounted(clock);
+    globe.setStates(states, { ba: at(6, 4) });
+    globe.setStates(states, { ba: at(6, 4) }, { animate: true });
+    expect(clock.pending).toBe(0);
+  });
+
+  it('another state, or none, never tweens from the previous one', async () => {
+    const clock = new ManualClock();
+    const { fake, globe } = await mounted(clock);
+    globe.setMunicipalities('BA', munis, { 1: at(6, 4) });
+    const other: AreaCollection = { type: 'FeatureCollection', features: [square(-50, -25, { id: '1' })] };
+    globe.setMunicipalities('PR', other, { 1: at(3, 7) }, { animate: true });
+    expect(clock.pending).toBe(0);
+    globe.setMunicipalities('PR', other, { 1: at(4, 6) }, { animate: true });
+    expect(clock.pending).toBe(1);
+    globe.setMunicipalities(null, null, {}, { animate: true });
+    expect(clock.pending).toBe(0);
+    expect((fake.data.muni as AreaCollection).features).toEqual([]);
+  });
+
+  it('a call without animate mid-tween cancels it and draws the new numbers', async () => {
+    const clock = new ManualClock();
+    const { fake, globe } = await mounted(clock);
+    globe.setStates(states, { ba: at(6, 4) });
+    globe.setStates(states, { ba: at(3, 7) }, { animate: true });
+    clock.step(100);
+    globe.setStates(states, { ba: at(5, 5) });
+    expect(clock.pending).toBe(0);
+    expect(westEdge(fake)).toBeCloseTo(-41.5);
+  });
+
+  it('tweens country leader colours on overseas pieces and city dots', async () => {
+    const clock = new ManualClock();
+    const { fake, globe } = await mounted(clock);
+    globe.setWorld(japan, { '392': at(6, 4) });
+    globe.setAbroadCities(tokyo, { '30627': at(6, 4) });
+    globe.setWorld(japan, { '392': at(3, 7) }, { animate: true });
+    globe.setAbroadCities(tokyo, { '30627': at(3, 7) }, { animate: true });
+    clock.step(100);
+    const world = (fake.data.world as AreaCollection).features.map((f) => f.properties);
+    expect(world.some((p) => p?.side === 'W')).toBe(true);
+    expect((fake.data.cities as AreaCollection).features[0].properties?.side).toBe('W');
+    clock.run(50);
+    expect((fake.data.cities as AreaCollection).features[0].properties?.side).toBe('R');
+    expect((fake.data.world as AreaCollection).features.map((f) => f.properties?.side)).toEqual(['L', 'R', 'L', 'R', 'R']);
+  });
+
+  it('first-round solid fills never tween', async () => {
+    const clock = new ManualClock();
+    const { globe } = await mounted(clock);
+    globe.setStates(states, { ba: { fill: '#d7262d', el: 1 } });
+    globe.setStates(states, { ba: { fill: '#1f5fe0', el: 1 } }, { animate: true });
+    expect(clock.pending).toBe(0);
+  });
+
+  it('a redraw that costs too much ends the tween at once', async () => {
+    const clock = new ManualClock();
+    const { fake, globe } = await mounted(clock);
+    globe.setStates(states, { ba: at(6, 4) });
+    globe.setStates(states, { ba: at(3, 7) }, { animate: true });
+    const real = fake.getSource;
+    fake.getSource = (id: string) => ({ setData: (d: unknown) => { clock.t += 30; real(id).setData(d); } });
+    clock.step(16);
+    expect(clock.pending).toBe(0);
+    expect(westEdge(fake)).toBeCloseTo(-41.7);
+  });
+
+  it('too many changed areas skip the tween', async () => {
+    const clock = new ManualClock();
+    const { globe } = await mounted(clock);
+    const many: AreaCollection = { type: 'FeatureCollection', features: Array.from({ length: MAX_TWEEN_AREAS + 1 }, (_, i) => square(i % 50, Math.floor(i / 50), { id: String(i) })) };
+    const items = (l: number) => Object.fromEntries(many.features.map((f) => [String(f.properties?.id), at(l, 10 - l)]));
+    globe.setMunicipalities('MG', many, items(6));
+    globe.setMunicipalities('MG', many, items(4), { animate: true });
+    expect(clock.pending).toBe(0);
+  });
+
+  it('frame spacing grows with the cost of a redraw, within bounds', () => {
+    expect(frameInterval(0)).toBe(33);
+    expect(frameInterval(20)).toBe(80);
+    expect(frameInterval(100)).toBe(160);
+  });
+
+  it('countries without numbers, or across the antimeridian, stay whole', async () => {
+    const { fake, globe } = await mounted();
+    const fiji: AreaCollection = { type: 'FeatureCollection', features: [
+      square(10, 10, { iso: 1 }),
+      { ...square(0, 0, { iso: 242 }), geometry: { type: 'Polygon' as const, coordinates: [[[-179, -17], [179, -17], [179, -16], [-179, -16], [-179, -17]]] } },
+    ] };
+    globe.setWorld(fiji, { '242': at(6, 4) });
+    expect((fake.data.world as AreaCollection).features.map((f) => f.properties)).toEqual([{ iso: 1, side: 'X' }, { iso: 242, side: 'L' }]);
+    globe.setWorld(fiji, { '242': at(6, 4) }); // geometry already cut: reused
+    expect((fake.data.world as AreaCollection).features).toHaveLength(2);
+  });
+
+  it('a city without numbers is a grey dot of size zero', async () => {
+    const { fake, globe } = await mounted();
+    globe.setAbroadCities(tokyo, {});
+    expect((fake.data.cities as AreaCollection).features[0].properties).toEqual({ cd: '30627', iso: 392, el: 0, side: 'X' });
+  });
+
+  it('uses the browser frame clock by default', async () => {
+    const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 1);
+    const { globe } = await mounted();
+    globe.setStates(states, { ba: at(6, 4) });
+    globe.setStates(states, { ba: at(3, 7) }, { animate: true });
+    expect(raf).toHaveBeenCalled();
+    raf.mockRestore();
   });
 });

@@ -45,15 +45,20 @@ export interface RotationController {
   onChange(cb: (running: boolean) => void): void;
 }
 
+export interface PaintOptions {
+  /** a data update of the view on screen: tween the colours from what is drawn now */
+  animate?: boolean;
+}
+
 /** What the app needs from a globe. The MapLibre adapter lives in external/. */
 export interface GlobeRenderer {
   readonly rotation: RotationController;
   mount(el: HTMLElement): Promise<void>;
-  setWorld(world: AreaCollection, countries: Record<string, AreaPaint>): void;
+  setWorld(world: AreaCollection, countries: Record<string, AreaPaint>, opts?: PaintOptions): void;
   /** states: features with properties.uf (uppercase); ufs keyed lowercase like the API. */
-  setStates(states: AreaCollection, ufs: Record<string, AreaPaint>): void;
-  setMunicipalities(uf: string | null, geo: AreaCollection | null, items: Record<string, AreaPaint>): void;
-  setAbroadCities(cities: AbroadCity[], items: Record<string, AreaPaint>): void;
+  setStates(states: AreaCollection, ufs: Record<string, AreaPaint>, opts?: PaintOptions): void;
+  setMunicipalities(uf: string | null, geo: AreaCollection | null, items: Record<string, AreaPaint>, opts?: PaintOptions): void;
+  setAbroadCities(cities: AbroadCity[], items: Record<string, AreaPaint>, opts?: PaintOptions): void;
   focus(view: GlobeView): void;
   setPadding(p: Padding): void;
   onPick(cb: (pick: GlobePick) => void): void;

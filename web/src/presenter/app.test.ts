@@ -1,5 +1,5 @@
 import type { AreaResult, MultiResult, Notice, Round1Summary, Summary } from '../domain/types';
-import type { AreaCollection, AreaPaint, GlobeHover, GlobePick, GlobeRenderer, GlobeView, Padding, RotationController } from '../infra/globe';
+import type { AreaCollection, AreaPaint, GlobeHover, GlobePick, GlobeRenderer, GlobeView, Padding, PaintOptions, RotationController } from '../infra/globe';
 import { createApp, type AppDeps } from './app';
 
 const r = (l: number, f: number): AreaResult => ({ el: 10, comp: 8, abst: 2, vv: l + f, vb: 0, vn: 0, l, f, st: 1, ts: 1, dg: '25/10/2026', hg: '17:30:00', released: true });
@@ -33,8 +33,10 @@ class FakeGlobe implements GlobeRenderer {
   rotation: RotationController = { running: false, start() {}, stop() {}, toggle: () => true, onChange() {} };
   mount = () => Promise.resolve();
   setWorld() {}
-  setStates(_s: AreaCollection, ufs: Record<string, AreaPaint>) { this.states = ufs; }
-  setMunicipalities(_uf: string | null, _g: AreaCollection | null, items: Record<string, AreaPaint>) { this.munis = items; }
+  /** `animate` of every paint, in order (states and municipalities) */
+  animated: boolean[] = [];
+  setStates(_s: AreaCollection, ufs: Record<string, AreaPaint>, o?: PaintOptions) { this.states = ufs; this.animated.push(Boolean(o?.animate)); }
+  setMunicipalities(_uf: string | null, _g: AreaCollection | null, items: Record<string, AreaPaint>, o?: PaintOptions) { this.munis = items; this.animated.push(Boolean(o?.animate)); }
   setAbroadCities() {}
   focus(v: GlobeView) { this.views.push(v); }
   setPadding(_p: Padding) {}
@@ -492,5 +494,57 @@ describe('app', () => {
     expect(globe.views.at(-1)).toEqual({ kind: 'uf', uf: 'SP' });
     expect(document.querySelector<HTMLElement>('.results-r1')!.hidden).toBe(false);
     app.dispose();
+  });
+
+  describe('live update animation', () => {
+    let state: DocumentVisibilityState = 'visible';
+    beforeAll(() => Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state }));
+    afterAll(() => { delete (document as { visibilityState?: unknown }).visibilityState; });
+    afterEach(() => { delete (window as { matchMedia?: unknown }).matchMedia; });
+    const poll = () => document.dispatchEvent(new Event('visibilitychange'));
+
+    it('the first paint and filter changes are instant; a poll of the same view animates', async () => {
+      const globe = new FakeGlobe();
+      const app = await createApp(deps(globe, []));
+      expect(globe.animated.every((a) => !a)).toBe(true);
+      globe.animated = [];
+      poll();
+      await flush();
+      expect(globe.animated).toEqual([true, true]);
+      globe.pick!({ kind: 'uf', uf: 'BA' });
+      await flush();
+      await flush();
+      expect(globe.animated.slice(2).every((a) => !a)).toBe(true);
+      app.dispose();
+    });
+
+    it('a poll that started before a filter change does not animate', async () => {
+      const globe = new FakeGlobe();
+      const d = deps(globe, []);
+      const app = await createApp(d);
+      let release: () => void = () => {};
+      d.api.summary = () => new Promise((res) => { release = () => res(summary); });
+      poll();
+      await flush();
+      globe.pick!({ kind: 'country', iso: 392 });
+      await flush();
+      globe.animated = [];
+      release();
+      await flush();
+      expect(globe.animated).toEqual([false, false]);
+      app.dispose();
+    });
+
+    it('no animation when the visitor prefers reduced motion', async () => {
+      window.matchMedia = (() => ({ matches: true }) as MediaQueryList) as typeof window.matchMedia;
+      const globe = new FakeGlobe();
+      const app = await createApp(deps(globe, []));
+      globe.animated = [];
+      poll();
+      await flush();
+      expect(globe.animated).toEqual([false, false]);
+      expect(document.querySelector('.results-r2')!.classList.contains('instant')).toBe(true);
+      app.dispose();
+    });
   });
 });
