@@ -2,8 +2,8 @@ import bbox from '@turf/bbox';
 import type { Feature, FeatureCollection, MultiPolygon, Point, Polygon } from 'geojson';
 import { leaderSide, share, splitFeature } from '../domain/split';
 import { REGION_OF } from '../domain/filters';
-import type { AbroadCity, AreaResult } from '../domain/types';
-import type { AreaCollection, GlobeHover, GlobePick, GlobeRenderer, GlobeView, Padding } from '../infra/globe';
+import type { AbroadCity } from '../domain/types';
+import type { AreaCollection, AreaPaint, GlobeHover, GlobePick, GlobeRenderer, GlobeView, Padding, SolidFill } from '../infra/globe';
 import { IdleRotation } from './rotation';
 
 /** The slice of the MapLibre Map API this adapter uses (keeps the library swappable and testable). */
@@ -35,11 +35,21 @@ const BRAZIL_CENTER: [number, number] = [-52, -14];
 const FLIGHT_MS = 2600;
 const PICK_LAYERS = ['cities', 'muni-fill', 'br-fill', 'world-fill'];
 
-const sideColor = ['match', ['get', 'side'], 'L', RED, 'R', BLUE, GHOST];
+// L/R = the two halves of a second-round split; W = whole area in its own color (first round)
+const sideColor = ['match', ['get', 'side'], 'L', RED, 'R', BLUE, 'W', ['get', 'color'], GHOST];
 const activeColor = (key: string, list: (string | number)[]) => ['case', ['in', ['get', key], ['literal', list]], sideColor, GHOST];
 const empty = (): FeatureCollection => ({ type: 'FeatureCollection', features: [] });
 const fc = <G extends Polygon | MultiPolygon | Point>(features: Feature<G>[]): FeatureCollection<G> => ({ type: 'FeatureCollection', features });
 type Area = Feature<Polygon | MultiPolygon>;
+
+const isSolid = (p: AreaPaint | undefined): p is SolidFill => p !== undefined && 'fill' in p;
+const solidProps = (p: SolidFill) => (p.fill ? { side: 'W', color: p.fill } : { side: 'X' });
+
+/** Cuts the area red × blue (second round) or keeps it whole in the winner's color (first round). */
+function paintArea(f: Area, paint: AreaPaint | undefined, props: Record<string, unknown>): Area[] {
+  if (isSolid(paint)) return [{ ...f, properties: { ...props, ...solidProps(paint) } }];
+  return splitFeature(f, share(paint), props);
+}
 
 function polygons(f: Area): Area[] {
   const g = f.geometry;
@@ -92,7 +102,7 @@ export class MapLibreGlobe implements GlobeRenderer {
     this.padding = p;
   }
 
-  setWorld(world: AreaCollection, countries: Record<string, AreaResult>): void {
+  setWorld(world: AreaCollection, countries: Record<string, AreaPaint>): void {
     const parts: Area[] = [];
     this.world.clear();
     this.worldShapes.clear();
@@ -101,6 +111,10 @@ export class MapLibreGlobe implements GlobeRenderer {
       this.world.set(iso, f);
       this.worldShapes.add(iso);
       const r = countries[String(iso)];
+      if (isSolid(r)) {
+        parts.push({ ...f, properties: { iso, ...solidProps(r) } });
+        continue;
+      }
       const s = share(r);
       if (s === null) {
         parts.push({ ...f, properties: { iso, side: 'X' } });
@@ -120,19 +134,19 @@ export class MapLibreGlobe implements GlobeRenderer {
     this.setData('world', fc(parts));
   }
 
-  setStates(states: AreaCollection, ufs: Record<string, AreaResult>): void {
+  setStates(states: AreaCollection, ufs: Record<string, AreaPaint>): void {
     this.states.clear();
     const parts: Area[] = [];
     for (const f of states.features) {
       const uf = String(f.properties?.uf);
       this.states.set(uf, f);
-      parts.push(...splitFeature(f, share(ufs[uf.toLowerCase()]), { uf }));
+      parts.push(...paintArea(f, ufs[uf.toLowerCase()], { uf }));
     }
     this.setData('br', fc(parts));
     this.setData('brline', states);
   }
 
-  setMunicipalities(uf: string | null, geo: AreaCollection | null, items: Record<string, AreaResult>): void {
+  setMunicipalities(uf: string | null, geo: AreaCollection | null, items: Record<string, AreaPaint>): void {
     this.munis.clear();
     if (!uf || !geo) {
       this.setData('muni', empty());
@@ -143,19 +157,22 @@ export class MapLibreGlobe implements GlobeRenderer {
     for (const f of geo.features) {
       const id = String(f.properties?.id);
       this.munis.set(id, f);
-      parts.push(...splitFeature(f, share(items[id]), { id }));
+      parts.push(...paintArea(f, items[id], { id }));
     }
     this.setData('muni', fc(parts));
     this.setData('muniline', geo);
   }
 
-  setAbroadCities(cities: AbroadCity[], items: Record<string, AreaResult>): void {
+  setAbroadCities(cities: AbroadCity[], items: Record<string, AreaPaint>): void {
     this.cities = new Map(cities.map((c) => [c.cd, c]));
-    this.setData('cities', fc(cities.map((c) => ({
-      type: 'Feature' as const,
-      geometry: { type: 'Point' as const, coordinates: [c.lon, c.lat] },
-      properties: { cd: c.cd, iso: c.iso, el: items[c.cd]?.el ?? 0, side: leaderSide(items[c.cd]) },
-    }))));
+    this.setData('cities', fc(cities.map((c) => {
+      const r = items[c.cd];
+      return {
+        type: 'Feature' as const,
+        geometry: { type: 'Point' as const, coordinates: [c.lon, c.lat] },
+        properties: { cd: c.cd, iso: c.iso, el: r?.el ?? 0, ...(isSolid(r) ? solidProps(r) : { side: leaderSide(r) }) },
+      };
+    })));
   }
 
   focus(view: GlobeView): void {
@@ -249,7 +266,24 @@ export class MapLibreGlobe implements GlobeRenderer {
 
   private fit(features: Feature[], maxZoom: number): void {
     if (!features.length) return;
-    this.map.fitBounds(bounds(features), { padding: this.padding, maxZoom, duration: FLIGHT_MS, essential: true });
+    const b = bounds(features);
+    const p = this.padding;
+    if (p.bottom <= p.top) {
+      this.map.fitBounds(b, { padding: p, maxZoom, duration: FLIGHT_MS, essential: true });
+      return;
+    }
+    // Bottom dock (phones, portrait tablets): on the globe, fitBounds either refuses
+    // ("cannot fit") or lands off-centre with a bottom-heavy padding, so compute the
+    // camera ourselves (mercator scale of the bounds) and fly there.
+    const [[x0, y0], [x1, y1]] = b;
+    const canvas = this.map.getCanvas();
+    const w = Math.max(1, canvas.clientWidth - p.left - p.right);
+    const h = Math.max(1, canvas.clientHeight - p.top - p.bottom);
+    const merc = (lat: number) => Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360));
+    const zx = Math.log2((w * 360) / (512 * Math.max(x1 - x0, 1e-6)));
+    const zy = Math.log2((h * 2 * Math.PI) / (512 * Math.max(merc(y1) - merc(y0), 1e-6)));
+    const lat = (Math.atan(Math.sinh((merc(y0) + merc(y1)) / 2)) * 180) / Math.PI;
+    this.map.flyTo({ center: [(x0 + x1) / 2, lat], zoom: Math.min(maxZoom, zx, zy), padding: p, duration: FLIGHT_MS, essential: true });
   }
 
   private setData(id: string, data: unknown): void {
@@ -329,7 +363,7 @@ export class MapLibreGlobe implements GlobeRenderer {
       {
         id: 'cities', type: 'circle', source: 'cities',
         paint: {
-          'circle-color': ['match', ['get', 'side'], 'L', RED, 'R', BLUE, '#9aa1ad'],
+          'circle-color': ['match', ['get', 'side'], 'L', RED, 'R', BLUE, 'W', ['get', 'color'], '#9aa1ad'],
           'circle-radius': ['interpolate', ['linear'], ['zoom'], 1, ['*', 0.5, radius], 6, ['*', 1.6, radius]],
           'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2.5,
         },

@@ -57,5 +57,14 @@
   "footer_code": "Código aberto",
   "status_globe_unavailable": "Globo indisponível neste dispositivo — os resultados continuam disponíveis nos filtros.",
   "credit_by": "Criado por",
-  "credit_portfolio": "Portfólio →"
+  "credit_portfolio": "Portfólio →",
+  "app_title_r1": "Resultado · 1º turno 2026",
+  "app_title_short": "Presidente 2026",
+  "round_label": "Turno",
+  "round_1": "1º turno",
+  "round_2": "2º turno",
+  "r1_runoff": "2º TURNO",
+  "r1_show_all": "Ver todos os {n} candidatos",
+  "r1_show_less": "Ver menos",
+  "r1_final": "Resultado final · {pct} das seções"
 }

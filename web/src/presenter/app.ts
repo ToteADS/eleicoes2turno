@@ -1,5 +1,6 @@
 import { initialFilters, setCity, setCountry, setUf, type FilterState } from '../domain/filters';
-import type { AbroadCity, AreaListResponse, AreaResult, PublicConfig, Summary } from '../domain/types';
+import { ranking, sumMulti } from '../domain/multi';
+import type { AbroadCity, AreaListResponse, AreaResult, MultiResult, PublicConfig, Round, Round1Summary, Summary } from '../domain/types';
 import { latest } from '../infra/api';
 import type { AreaCollection, GlobePick, GlobeRenderer, GlobeView } from '../infra/globe';
 import { t } from '../i18n';
@@ -9,6 +10,10 @@ import { FiltersCard } from './filters-card';
 import { GlobeControls } from './globe-controls';
 import { ResultsCard } from './results-card';
 import { NullGlobe } from './null-globe';
+import { Round1Card } from './round1-card';
+import { round1Fills } from './round1-paint';
+import { RoundToggle } from './round-toggle';
+import { readRound, roundUrl } from './round-url';
 import { describeScope } from './scope';
 import { isStale } from './staleness';
 import { Tooltip } from './tooltip';
@@ -27,6 +32,12 @@ export interface AppDeps {
     world(): Promise<AreaCollection>;
     municipalities(uf: string): Promise<AreaCollection>;
     abroadCities(): Promise<AbroadCity[]>;
+  };
+  /** static snapshot of the final first round (never polled) */
+  round1: {
+    summary(): Promise<Round1Summary>;
+    municipalities(uf: string): Promise<Record<string, MultiResult>>;
+    abroadCities(): Promise<Record<string, MultiResult>>;
   };
   pollMs?: number;
 }
@@ -56,7 +67,8 @@ function shell(root: HTMLElement): void {
       <div class="ad ad-mobile"></div>
       <aside class="card results" id="results" aria-live="polite">
         <button type="button" class="sheet-handle" aria-expanded="false"><span></span><em>${t('results_expand')}</em></button>
-        <div class="results-body"></div>
+        <div class="results-body results-r2"></div>
+        <div class="results-body results-r1" hidden></div>
         <div class="ad ad-results"></div>
         <div class="credit"></div>
       </aside>
@@ -71,14 +83,24 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
   shell(d.root);
   const $ = <T extends HTMLElement>(sel: string) => d.root.querySelector<T>(sel)!;
   const filtersCard = new FiltersCard($('#topbar'));
-  const resultsCard = new ResultsCard($('.results-body'));
+  const resultsCard = new ResultsCard($('.results-r2'));
+  const round1Card = new Round1Card($('.results-r1'));
+  const roundToggle = new RoundToggle(filtersCard.roundSlot);
   const tooltip = new Tooltip($('.tip'));
 
+  let round: Round = readRound(window.location.search);
   let filters = initialFilters();
   let summary: Summary | null = null;
   let municipalities: Record<string, AreaResult> = {};
   let muniGeo: AreaCollection | null = null;
   let abroadResults: Record<string, AreaResult> = {};
+  // first round: loaded on demand from the static snapshot
+  let r1: Round1Summary | null = null;
+  let r1Munis: Record<string, MultiResult> = {};
+  let r1Abroad: Record<string, MultiResult> = {};
+  const loadRound1 = async () => {
+    [r1, r1Abroad] = await Promise.all([d.round1.summary().catch(() => null), d.round1.abroadCities().catch(() => ({}))]);
+  };
 
   const emptyAreas = (): AreaCollection => ({ type: 'FeatureCollection', features: [] });
   const [config, states, world, abroadCities] = await Promise.all([
@@ -88,8 +110,11 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
     d.geo.abroadCities().catch(() => [] as AbroadCity[]),
   ]);
   let failedPolls = 0;
-  summary = await d.api.summary().catch(() => { failedPolls++; return null; });
-  abroadResults = (await d.api.abroadCities().catch(() => null))?.items ?? {};
+  const loadRound2 = async () => {
+    summary = await d.api.summary().catch(() => { failedPolls++; return null; });
+    abroadResults = (await d.api.abroadCities().catch(() => null))?.items ?? {};
+  };
+  await (round === 1 ? loadRound1() : loadRound2());
 
   const stateNames = Object.fromEntries(states.features.map((f) => [String(f.properties?.uf), String(f.properties?.name)]));
   const countries = [...new Map(abroadCities.map((c) => [c.iso, c.country])).entries()]
@@ -107,11 +132,14 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
     globe = new NullGlobe();
     $('.globe-note').hidden = false;
   }
+  // first round: each area whole in its winner's color; second round: the red × blue split
+  const fills = (items: Record<string, MultiResult>) => (r1 ? round1Fills(items, r1.candidates) : {});
+  const paintMunicipalities = () => globe.setMunicipalities(filters.uf, muniGeo, round === 1 ? fills(r1Munis) : municipalities);
   const paintGlobe = () => {
-    globe.setStates(states, summary?.ufs ?? {});
-    globe.setWorld(world, summary?.countries ?? {});
-    globe.setAbroadCities(abroadCities, abroadResults);
-    globe.setMunicipalities(filters.uf, muniGeo, municipalities);
+    globe.setStates(states, round === 1 ? fills(r1?.ufs ?? {}) : summary?.ufs ?? {});
+    globe.setWorld(world, round === 1 ? fills(r1?.countries ?? {}) : summary?.countries ?? {});
+    globe.setAbroadCities(abroadCities, round === 1 ? fills(r1Abroad) : abroadResults);
+    paintMunicipalities();
   };
 
   const muniNames = () => Object.fromEntries((muniGeo?.features ?? []).map((f) => [String(f.properties?.id), String(f.properties?.name)]));
@@ -127,12 +155,19 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
       states: Object.entries(stateNames).map(([uf, name]) => ({ uf, name })).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')),
       cities,
     });
-    const scope = describeScope(filters, {
-      summary, stateNames, abroadCities, municipalities, municipalityNames: names,
-      municipalityCount: muniGeo?.features.length ?? 0, abroadResults,
-    });
-    const staleTime = summary ? new Date(summary.updatedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '';
-    resultsCard.render(scope, summary?.candidates ?? [], isStale(summary, failedPolls), staleTime);
+    const common = { stateNames, abroadCities, municipalityNames: names, municipalityCount: muniGeo?.features.length ?? 0 };
+    roundToggle.render(round);
+    filtersCard.setTitle(round === 1 ? t('app_title_r1') : t('app_title'));
+    $('.results-r1').hidden = round !== 1;
+    $('.results-r2').hidden = round !== 2;
+    if (round === 1) {
+      const scope = describeScope<MultiResult>(filters, { ...common, summary: r1, municipalities: r1Munis, abroadResults: r1Abroad, sum: sumMulti });
+      round1Card.render(scope, r1?.candidates ?? []);
+    } else {
+      const scope = describeScope(filters, { ...common, summary, municipalities, abroadResults });
+      const staleTime = summary ? new Date(summary.updatedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '';
+      resultsCard.render(scope, summary?.candidates ?? [], isStale(summary, failedPolls), staleTime);
+    }
     updatePadding();
   };
 
@@ -140,13 +175,19 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
     if (!uf) {
       muniGeo = null;
       municipalities = {};
+      r1Munis = {};
       return true;
     }
-    const got = await latest('mun', () =>
-      Promise.all([d.geo.municipalities(uf), d.api.municipalities(uf).catch(() => null)]).catch(() => null));
+    const forRound = round;
+    const results = (): Promise<Record<string, AreaResult | MultiResult> | null> => forRound === 1
+      ? d.round1.municipalities(uf).catch(() => null)
+      : d.api.municipalities(uf).then((x) => x.items, () => null);
+    const got = await latest('mun', () => Promise.all([d.geo.municipalities(uf), results()]).catch(() => null));
     if (got === undefined) return false; // a newer selection won
     // on failure clear the previous state's data rather than showing it under the new state
-    [muniGeo, municipalities] = got ? [got[0], got[1]?.items ?? {}] : [null, {}];
+    muniGeo = got ? got[0] : null;
+    if (forRound === 1) r1Munis = (got?.[1] ?? {}) as Record<string, MultiResult>;
+    else municipalities = (got?.[1] ?? {}) as Record<string, AreaResult>;
     return true;
   };
 
@@ -156,12 +197,27 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
     render();
     if (ufChanged && !(await loadMunicipalities(next.uf))) return;
     if (next !== filters) return; // superseded while loading
-    globe.setMunicipalities(filters.uf, muniGeo, municipalities);
+    paintMunicipalities();
     globe.focus(viewFor(filters));
     filtersCard.close();
     render();
   };
   filtersCard.onChange((s) => void apply(s));
+
+  // switching round keeps the filters and the camera; only the data and the colors change
+  const switchRound = async (next: Round) => {
+    round = next;
+    window.history.replaceState(window.history.state, '', roundUrl(window.location.href, next));
+    render();
+    if (next === 1 && !r1) await loadRound1();
+    if (next === 2) await loadRound2(); // live data may have moved on while round 1 was shown
+    if (round !== next) return; // switched again meanwhile
+    // a newer switch or state reloads the municipalities too, and wins (latest)
+    if (filters.uf && !(await loadMunicipalities(filters.uf))) return;
+    paintGlobe();
+    render();
+  };
+  roundToggle.onChange((r) => void switchRound(r));
 
   globe.onPick((p: GlobePick) => {
     if (p.kind === 'uf') void apply(setUf(filters, p.uf));
@@ -172,14 +228,19 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
       if (c) void apply(setCity(setCountry(filters, c.iso), c.cd));
     }
   });
+  const tip = (x: number, y: number, name: string, second: AreaResult | undefined, first: MultiResult | undefined) =>
+    round === 1 ? tooltip.showRanking(x, y, name, ranking(first, r1?.candidates ?? [])) : tooltip.show(x, y, name, second);
   globe.onHover((h) => {
     if (!h) return tooltip.hide();
-    if (h.kind === 'uf') tooltip.show(h.x, h.y, stateNames[h.uf] ?? h.uf, summary?.ufs[h.uf.toLowerCase()]);
-    if (h.kind === 'municipality') tooltip.show(h.x, h.y, muniNames()[h.id] ?? h.id, municipalities[h.id]);
-    if (h.kind === 'country') tooltip.show(h.x, h.y, countries.find((c) => c.iso === h.iso)?.name ?? '', summary?.countries[String(h.iso)]);
+    if (h.kind === 'uf') tip(h.x, h.y, stateNames[h.uf] ?? h.uf, summary?.ufs[h.uf.toLowerCase()], r1?.ufs[h.uf.toLowerCase()]);
+    if (h.kind === 'municipality') tip(h.x, h.y, muniNames()[h.id] ?? h.id, municipalities[h.id], r1Munis[h.id]);
+    if (h.kind === 'country') {
+      const iso = String(h.iso);
+      tip(h.x, h.y, countries.find((c) => c.iso === h.iso)?.name ?? '', summary?.countries[iso], r1?.countries[iso]);
+    }
     if (h.kind === 'abroadCity') {
       const c = abroadCities.find((x) => x.cd === h.cd);
-      tooltip.show(h.x, h.y, c ? `${c.nm} · ${c.country}` : h.cd, abroadResults[h.cd]);
+      tip(h.x, h.y, c ? `${c.nm} · ${c.country}` : h.cd, abroadResults[h.cd], r1Abroad[h.cd]);
     }
   });
   new GlobeControls($('.controls'), globe, () => void apply(initialFilters()));
@@ -214,7 +275,7 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
   globe.focus(viewFor(filters));
 
   const poll = async () => {
-    if (document.visibilityState === 'hidden') return;
+    if (round !== 2 || document.visibilityState === 'hidden') return; // the first round is final
     const [s, abroad, muni] = await Promise.all([
       d.api.summary().catch(() => null),
       d.api.abroadCities().catch(() => null),

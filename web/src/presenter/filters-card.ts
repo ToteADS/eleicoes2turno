@@ -26,7 +26,8 @@ export class FiltersCard {
   constructor(private readonly el: HTMLElement) {
     el.innerHTML = `
       <div class="topbar-head">
-        <h1>${t('app_title')} <small>${t('app_office')}</small></h1>
+        <h1><span class="t-long">${t('app_title')}</span><span class="t-short">${t('app_title_short')}</span> <small>${t('app_office')}</small></h1>
+        <div class="round-slot"></div>
         <button type="button" class="filters-toggle" aria-expanded="false" aria-controls="filters">${t('filters_open')}</button>
       </div>
       <div class="filters" id="filters">
@@ -60,6 +61,15 @@ export class FiltersCard {
       toggle.textContent = open ? t('filters_close') : t('filters_open');
       el.dispatchEvent(new CustomEvent('resize-card', { bubbles: true }));
     });
+  }
+
+  /** Where the round toggle goes, between the title and the filters button. */
+  get roundSlot(): HTMLElement {
+    return this.el.querySelector('.round-slot')!;
+  }
+
+  setTitle(title: string): void {
+    this.el.querySelector('.t-long')!.textContent = title;
   }
 
   onChange(cb: (s: FilterState) => void): void {

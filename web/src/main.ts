@@ -8,6 +8,7 @@ import { createMapLibreMap } from './external/maplibre-factory';
 import { MapLibreGlobe } from './external/maplibre-globe';
 import { ApiClient } from './infra/api';
 import { GeoLoader } from './infra/geo';
+import { Round1Loader } from './infra/round1';
 import { detectLocale, setLocale } from './i18n';
 import { createApp } from './presenter/app';
 
@@ -20,4 +21,5 @@ void createApp({
   globe: new MapLibreGlobe(createMapLibreMap),
   api: new ApiClient(),
   geo: new GeoLoader(),
+  round1: new Round1Loader(),
 });

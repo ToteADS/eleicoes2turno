@@ -57,5 +57,14 @@
   "footer_code": "Open source",
   "status_globe_unavailable": "Globe unavailable on this device — results are still available through the filters.",
   "credit_by": "Made by",
-  "credit_portfolio": "Portfolio →"
+  "credit_portfolio": "Portfolio →",
+  "app_title_r1": "Results · 1st round 2026",
+  "app_title_short": "President 2026",
+  "round_label": "Round",
+  "round_1": "1st round",
+  "round_2": "2nd round",
+  "r1_runoff": "RUNOFF",
+  "r1_show_all": "See all {n} candidates",
+  "r1_show_less": "Show fewer",
+  "r1_final": "Final result · {pct} of polling sections"
 }

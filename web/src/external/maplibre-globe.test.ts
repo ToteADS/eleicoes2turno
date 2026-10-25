@@ -106,3 +106,70 @@ describe('MapLibreGlobe', () => {
     expect(picks).toEqual([{ kind: 'uf', uf: 'BA' }]);
   });
 });
+
+describe('MapLibreGlobe first round (solid fills)', () => {
+  const japan: AreaCollection = { type: 'FeatureCollection', features: [square(138, 35, { iso: 392 })] };
+  const munis: AreaCollection = { type: 'FeatureCollection', features: [square(-42, -13, { id: '2900207' })] };
+
+  it('paints states whole with the winner color, grey without one', async () => {
+    const { fake, globe } = await mounted();
+    globe.setStates({ type: 'FeatureCollection', features: [...states.features, square(-50, -25, { uf: 'PR' })] },
+      { ba: { fill: '#d7262d', el: 10 }, pr: { fill: null, el: 0 } });
+    const fc = fake.data.br as AreaCollection;
+    expect(fc.features.map((f) => [f.properties?.uf, f.properties?.side, f.properties?.color])).toEqual([['BA', 'W', '#d7262d'], ['PR', 'X', undefined]]);
+  });
+
+  it('does not split countries and municipalities', async () => {
+    const { fake, globe } = await mounted();
+    globe.setWorld(japan, { '392': { fill: '#1f5fe0', el: 5 } });
+    globe.setMunicipalities('BA', munis, { '2900207': { fill: '#2e9e5b', el: 5 } });
+    expect((fake.data.world as AreaCollection).features.map((f) => f.properties)).toEqual([{ iso: 392, side: 'W', color: '#1f5fe0' }]);
+    expect((fake.data.muni as AreaCollection).features.map((f) => f.properties)).toEqual([{ id: '2900207', side: 'W', color: '#2e9e5b' }]);
+  });
+
+  it('colors abroad city dots by the winner and sizes them by electorate', async () => {
+    const { fake, globe } = await mounted();
+    globe.setAbroadCities([{ cd: '30627', nm: 'Tóquio', country: 'Japão', iso: 392, lat: 35, lon: 139 }], { '30627': { fill: '#1f5fe0', el: 40 } });
+    const props = (fake.data.cities as AreaCollection).features[0].properties;
+    expect(props).toEqual({ cd: '30627', iso: 392, el: 40, side: 'W', color: '#1f5fe0' });
+  });
+
+  it('fill expressions use the color of whole areas', async () => {
+    const { fake } = await mounted();
+    const layer = fake.calls.find((c) => c.name === 'addLayer' && (c.args[0] as { id: string }).id === 'br-fill')!;
+    expect(JSON.stringify((layer.args[0] as { paint: unknown }).paint)).toContain('"W",["get","color"]');
+  });
+
+  it('second-round city dots keep the leader side', async () => {
+    const { fake, globe } = await mounted();
+    globe.setAbroadCities([{ cd: '30627', nm: 'Tóquio', country: 'Japão', iso: 392, lat: 35, lon: 139 }], { '30627': released });
+    expect((fake.data.cities as AreaCollection).features[0].properties).toEqual({ cd: '30627', iso: 392, el: 1, side: 'L' });
+  });
+
+  it('with a bottom dock it flies to the centre of the area instead of fitting bounds', async () => {
+    const { fake, globe } = await mounted();
+    Object.defineProperty(fake.canvas, 'clientWidth', { value: 390 });
+    Object.defineProperty(fake.canvas, 'clientHeight', { value: 844 });
+    globe.setStates(states, { ba: released });
+    globe.setPadding({ top: 100, right: 60, bottom: 320, left: 20 });
+    globe.focus({ kind: 'uf', uf: 'BA' });
+    const fly = fake.last('flyTo')!.args[0] as { center: number[]; zoom: number; padding: unknown };
+    expect(fake.last('fitBounds')).toBeUndefined();
+    expect(fly.center[0]).toBeCloseTo(-41.5);
+    expect(fly.center[1]).toBeCloseTo(-12.5, 1);
+    expect(fly.zoom).toBeCloseTo(Math.log2((310 * 360) / 512), 5); // width-bound: 310 px for 1°
+    expect(fly.padding).toEqual({ top: 100, right: 60, bottom: 320, left: 20 });
+  });
+
+  it('with a bottom dock a large area gets the zoom that fits it', async () => {
+    const { fake, globe } = await mounted();
+    Object.defineProperty(fake.canvas, 'clientWidth', { value: 390 });
+    Object.defineProperty(fake.canvas, 'clientHeight', { value: 844 });
+    const big = { type: 'FeatureCollection' as const, features: [{ ...square(-74, -34, { uf: 'XX' }), geometry: { type: 'Polygon' as const, coordinates: [[[-74, -34], [-34, -34], [-34, 5], [-74, 5], [-74, -34]]] } }] };
+    globe.setStates(big, {});
+    globe.setPadding({ top: 100, right: 60, bottom: 320, left: 20 });
+    globe.focus({ kind: 'brazil', region: 'ALL' });
+    const fly = fake.last('flyTo')!.args[0] as { zoom: number };
+    expect(fly.zoom).toBeCloseTo(Math.log2((310 * 360) / (512 * 40)), 5);
+  });
+});

@@ -1,30 +1,41 @@
 import { sumResults } from '../domain/aggregate';
 import { REGION_OF, type FilterState } from '../domain/filters';
-import type { AbroadCity, AreaResult, Summary } from '../domain/types';
+import type { AbroadCity, AreaResult, BaseResult } from '../domain/types';
 import { t, type I18nKey } from '../i18n';
 
-/** What the results card shows for the current filters. */
-export interface Scope {
+/** What the results card shows for the current filters (R: a result of either round). */
+export interface Scope<R extends BaseResult = AreaResult> {
   crumb: string;
   title: string;
   sub: string;
-  result: AreaResult | undefined;
+  result: R | undefined;
 }
 
-export interface ScopeData {
-  summary: Summary | null;
+/** The tables of one round that describeScope reads (Summary and Round1Summary both fit). */
+export interface ScopeTotals<R> {
+  br: R;
+  brUfsSum: R;
+  ufs: Record<string, R>;
+  countries: Record<string, R>;
+}
+
+export interface ScopeData<R extends BaseResult = AreaResult> {
+  summary: ScopeTotals<R> | null;
   stateNames: Record<string, string>;
   abroadCities: AbroadCity[];
-  municipalities: Record<string, AreaResult>;
+  municipalities: Record<string, R>;
   municipalityNames: Record<string, string>;
   municipalityCount: number;
-  abroadResults: Record<string, AreaResult>;
+  abroadResults: Record<string, R>;
+  /** adds up the states of a region; defaults to the second-round sum */
+  sum?: (list: R[]) => R;
 }
 
 const regionName = (r: string) => t(`region_${r}` as I18nKey);
 
-export function describeScope(f: FilterState, d: ScopeData): Scope {
+export function describeScope<R extends BaseResult = AreaResult>(f: FilterState, d: ScopeData<R>): Scope<R> {
   const s = d.summary;
+  const sum = d.sum ?? (sumResults as unknown as (list: R[]) => R);
   if (f.country === 'ALL') {
     return { crumb: '', title: t('filters_all_countries'), sub: t('results_official_total'), result: s?.br };
   }
@@ -53,7 +64,7 @@ export function describeScope(f: FilterState, d: ScopeData): Scope {
         crumb: brazil,
         title: regionName(f.region),
         sub: `${t('results_states_count', { n: ufs.length })} · ${t('results_sum_states')}`,
-        result: s ? sumResults(parts) : undefined,
+        result: s ? sum(parts) : undefined,
       };
     }
     return { crumb: '', title: brazil, sub: t('results_sum_states'), result: s?.brUfsSum };

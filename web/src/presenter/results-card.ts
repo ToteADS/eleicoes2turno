@@ -2,6 +2,7 @@ import { formatInt, formatPct } from '../domain/format';
 import { share } from '../domain/split';
 import type { Candidate } from '../domain/types';
 import { t } from '../i18n';
+import { resultRows } from './result-rows';
 import type { Scope } from './scope';
 
 const PHOTO_BASE = 'https://resultados.tse.jus.br/oficial/ele2026/6258/fotos/br/';
@@ -67,15 +68,7 @@ export class ResultsCard {
     (this.el.querySelector('.sl') as HTMLElement).style.flexGrow = String(s ?? 0.5);
     (this.el.querySelector('.sf') as HTMLElement).style.flexGrow = String(s === null ? 0.5 : 1 - s);
 
-    const row = (k: string, v: string, pct?: string) => `<div class="row"><span>${k}</span><span><b>${v}</b>${pct ? `<em>${pct}</em>` : ''}</span></div>`;
-    $('rows').innerHTML = !r ? '' : [
-      r.released ? row(t('results_valid'), formatInt(r.vv), r.comp ? formatPct(r.vv / r.comp) : undefined) : '',
-      r.released ? row(t('results_blank'), formatInt(r.vb), r.comp ? formatPct(r.vb / r.comp) : undefined) : '',
-      r.released ? row(t('results_null'), formatInt(r.vn), r.comp ? formatPct(r.vn / r.comp) : undefined) : '',
-      r.released ? row(t('results_turnout'), formatInt(r.comp), r.comp + r.abst ? formatPct(r.comp / (r.comp + r.abst)) : undefined) : '',
-      r.released ? row(t('results_abstention'), formatInt(r.abst), r.comp + r.abst ? formatPct(r.abst / (r.comp + r.abst)) : undefined) : '',
-      row(t('results_electorate'), formatInt(r.el)),
-    ].join('');
+    $('rows').innerHTML = resultRows(r);
 
     $('updated').textContent = stale
       ? t('status_stale', { time: staleTime })

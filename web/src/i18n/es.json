@@ -57,5 +57,14 @@
   "footer_code": "Código abierto",
   "status_globe_unavailable": "Globo no disponible en este dispositivo — los resultados siguen disponibles en los filtros.",
   "credit_by": "Creado por",
-  "credit_portfolio": "Portafolio →"
+  "credit_portfolio": "Portafolio →",
+  "app_title_r1": "Resultado · 1ª vuelta 2026",
+  "app_title_short": "Presidente 2026",
+  "round_label": "Vuelta",
+  "round_1": "1ª vuelta",
+  "round_2": "2ª vuelta",
+  "r1_runoff": "2ª VUELTA",
+  "r1_show_all": "Ver los {n} candidatos",
+  "r1_show_less": "Ver menos",
+  "r1_final": "Resultado final · {pct} de las secciones"
 }

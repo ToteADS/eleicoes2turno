@@ -1,11 +1,21 @@
-import type { AreaResult, Summary } from '../domain/types';
-import type { AreaCollection, GlobeHover, GlobePick, GlobeRenderer, GlobeView, Padding, RotationController } from '../infra/globe';
+import type { AreaResult, MultiResult, Round1Summary, Summary } from '../domain/types';
+import type { AreaCollection, AreaPaint, GlobeHover, GlobePick, GlobeRenderer, GlobeView, Padding, RotationController } from '../infra/globe';
 import { createApp, type AppDeps } from './app';
 
 const r = (l: number, f: number): AreaResult => ({ el: 10, comp: 8, abst: 2, vv: l + f, vb: 0, vn: 0, l, f, st: 1, ts: 1, dg: '25/10/2026', hg: '17:30:00', released: true });
 const summary: Summary = {
   updatedAt: '2026-10-25T20:30:00Z', stale: false, candidates: [],
   br: r(6, 4), brUfsSum: r(6, 4), zz: r(1, 1), ufs: { ba: r(7, 3) }, countries: { '392': r(1, 3) },
+};
+const m = (votes: number[]): MultiResult => ({ el: 10, comp: 8, abst: 2, vv: votes.reduce((a, b) => a + b, 0), vb: 0, vn: 0, st: 1, ts: 1, dg: '05/10/2026', hg: '12:51:47', released: true, votes });
+const round1: Round1Summary = {
+  dg: '05/10/2026', hg: '12:51:47',
+  candidates: [
+    { n: 22, name: 'Flávio Bolsonaro', party: 'PL', sqcand: '1', runoff: true },
+    { n: 13, name: 'Lula', party: 'PT', sqcand: '2', runoff: true },
+    { n: 70, name: 'Augusto Cury', party: 'AVANTE', sqcand: '3', runoff: false },
+  ],
+  br: m([5, 4, 1]), brUfsSum: m([5, 4, 1]), zz: m([1, 1, 0]), ufs: { ba: m([2, 7, 1]) }, countries: { '392': m([3, 1, 0]) },
 };
 const area = (props: Record<string, unknown>) => ({
   type: 'Feature' as const, properties: props,
@@ -16,17 +26,20 @@ const munis: AreaCollection = { type: 'FeatureCollection', features: [area({ id:
 
 class FakeGlobe implements GlobeRenderer {
   views: GlobeView[] = [];
+  states: Record<string, AreaPaint> = {};
+  munis: Record<string, AreaPaint> = {};
   pick?: (p: GlobePick) => void;
+  hover?: (h: GlobeHover | null) => void;
   rotation: RotationController = { running: false, start() {}, stop() {}, toggle: () => true, onChange() {} };
   mount = () => Promise.resolve();
   setWorld() {}
-  setStates() {}
-  setMunicipalities() {}
+  setStates(_s: AreaCollection, ufs: Record<string, AreaPaint>) { this.states = ufs; }
+  setMunicipalities(_uf: string | null, _g: AreaCollection | null, items: Record<string, AreaPaint>) { this.munis = items; }
   setAbroadCities() {}
   focus(v: GlobeView) { this.views.push(v); }
   setPadding(_p: Padding) {}
   onPick(cb: (p: GlobePick) => void) { this.pick = cb; }
-  onHover(_cb: (h: GlobeHover | null) => void) {}
+  onHover(cb: (h: GlobeHover | null) => void) { this.hover = cb; }
   onUserInteract() {}
   zoomIn() {}
   zoomOut() {}
@@ -48,6 +61,11 @@ function deps(globe: FakeGlobe, calls: string[]): AppDeps {
       municipalities: () => Promise.resolve(munis),
       abroadCities: () => Promise.resolve([{ cd: '30627', nm: 'Tóquio', country: 'Japão', iso: 392, lat: 35, lon: 139 }]),
     },
+    round1: {
+      summary: () => { calls.push('r1:summary'); return Promise.resolve(round1); },
+      municipalities: (uf: string) => { calls.push('r1:mun:' + uf); return Promise.resolve({ '2900207': m([1, 3, 0]) }); },
+      abroadCities: () => Promise.resolve({ '30627': m([4, 1, 0]) }),
+    },
     pollMs: 60_000,
   };
 }
@@ -55,7 +73,10 @@ function deps(globe: FakeGlobe, calls: string[]): AppDeps {
 const flush = () => new Promise((res) => setTimeout(res, 0));
 
 describe('app', () => {
-  beforeEach(() => { document.body.innerHTML = ''; });
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    history.replaceState(null, '', '/');
+  });
 
   it('starts on all countries spinning over Brazil', async () => {
     const globe = new FakeGlobe();
@@ -124,6 +145,175 @@ describe('app', () => {
     await flush();
     expect(globe.views.at(-1)).toEqual({ kind: 'municipality', uf: 'BA', id: '2900207' });
     expect(document.querySelector('.scope')?.textContent).toBe('Abaré');
+    app.dispose();
+  });
+
+  it('opens the first round from the URL with its own card and winner colors', async () => {
+    history.replaceState(null, '', '/?turno=1');
+    const globe = new FakeGlobe();
+    const calls: string[] = [];
+    const app = await createApp(deps(globe, calls));
+    const r1 = document.querySelector<HTMLElement>('.results-r1')!;
+    expect(r1.hidden).toBe(false);
+    expect(document.querySelector<HTMLElement>('.results-r2')!.hidden).toBe(true);
+    expect(r1.querySelector('.c1')?.getAttribute('data-cand')).toBe('22');
+    expect(r1.querySelector('.updated')?.textContent).toContain('Resultado final');
+    expect(document.querySelector('[data-round="1"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(document.querySelector('.topbar h1')?.textContent).toContain('1º turno');
+    expect(globe.states.ba).toEqual({ fill: expect.stringMatching(/^#/), el: 10 });
+    expect(calls).toContain('r1:summary');
+    app.dispose();
+  });
+
+  it('switching round keeps the filters, updates the URL and repaints', async () => {
+    const globe = new FakeGlobe();
+    const calls: string[] = [];
+    const app = await createApp(deps(globe, calls));
+    globe.pick!({ kind: 'uf', uf: 'BA' });
+    await flush();
+    expect(globe.munis['2900207']).toEqual(r(1, 1));
+    document.querySelector<HTMLButtonElement>('[data-round="1"]')!.click();
+    await flush();
+    expect(location.search).toBe('?turno=1');
+    expect((document.querySelector('#fUf') as HTMLSelectElement).value).toBe('BA');
+    expect(document.querySelector('.results-r1 .scope')?.textContent).toBe('Bahia');
+    expect(document.querySelector('.results-r1 .c1')?.getAttribute('data-cand')).toBe('13');
+    expect(calls).toContain('r1:mun:BA');
+    expect(globe.munis['2900207']).toEqual({ fill: expect.stringMatching(/^#/), el: 10 });
+    document.querySelector<HTMLButtonElement>('[data-round="2"]')!.click();
+    await flush();
+    expect(location.search).toBe('');
+    expect(document.querySelector<HTMLElement>('.results-r2')!.hidden).toBe(false);
+    expect(globe.munis['2900207']).toEqual(r(1, 1));
+    app.dispose();
+  });
+
+  it('the first round does not poll', async () => {
+    vi.useFakeTimers();
+    try {
+      history.replaceState(null, '', '/?turno=1');
+      const globe = new FakeGlobe();
+      const calls: string[] = [];
+      const p = createApp(deps(globe, calls));
+      await vi.runOnlyPendingTimersAsync();
+      const app = await p;
+      const before = calls.filter((c) => c === 'summary').length;
+      await vi.advanceTimersByTimeAsync(180_000);
+      expect(calls.filter((c) => c === 'summary').length).toBe(before);
+      app.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('first-round hover shows the ranking of the area', async () => {
+    history.replaceState(null, '', '/?turno=1');
+    const globe = new FakeGlobe();
+    const app = await createApp(deps(globe, []));
+    globe.hover!({ kind: 'uf', uf: 'BA', x: 1, y: 1 });
+    expect(document.querySelector('.tip')?.textContent).toContain('Lula70,0%');
+    globe.hover!({ kind: 'country', iso: 392, x: 1, y: 1 });
+    expect(document.querySelector('.tip')?.textContent).toContain('Flávio Bolsonaro75,0%');
+    globe.hover!({ kind: 'abroadCity', cd: '30627', x: 1, y: 1 });
+    expect(document.querySelector('.tip')?.textContent).toContain('Tóquio · Japão');
+    globe.pick!({ kind: 'uf', uf: 'BA' });
+    await flush();
+    globe.hover!({ kind: 'municipality', id: '2900207', x: 1, y: 1 });
+    expect(document.querySelector('.tip')?.textContent).toContain('Abaré');
+    globe.hover!(null);
+    expect(document.querySelector('.tip')?.classList.contains('on')).toBe(false);
+    app.dispose();
+  });
+
+  it('shows no data when the first-round snapshot is missing', async () => {
+    history.replaceState(null, '', '/?turno=1');
+    const globe = new FakeGlobe();
+    const d = deps(globe, []);
+    d.round1.summary = () => Promise.reject(new Error('404'));
+    const app = await createApp(d);
+    expect(document.querySelector('.results-r1 .status')?.textContent).toContain('Sem dados');
+    expect(globe.states).toEqual({});
+    app.dispose();
+  });
+
+  it('starting on the first round loads the second only when asked, and hovers follow the round', async () => {
+    history.replaceState(null, '', '/?turno=1');
+    const globe = new FakeGlobe();
+    const calls: string[] = [];
+    const app = await createApp(deps(globe, calls));
+    expect(calls).not.toContain('summary');
+    document.querySelector<HTMLButtonElement>('[data-round="2"]')!.click();
+    await flush();
+    expect(calls).toContain('summary');
+    expect(globe.states.ba).toEqual(r(7, 3));
+    globe.hover!({ kind: 'uf', uf: 'BA', x: 1, y: 1 });
+    expect(document.querySelector('.tip')?.textContent).toContain('Lula70,0%');
+    globe.hover!({ kind: 'abroadCity', cd: '30627', x: 1, y: 1 });
+    expect(document.querySelector('.tip')?.textContent).toContain('Tóquio');
+    app.dispose();
+  });
+
+  it('a quick double switch ends on the last round chosen', async () => {
+    const globe = new FakeGlobe();
+    const app = await createApp(deps(globe, []));
+    globe.pick!({ kind: 'uf', uf: 'BA' });
+    await flush();
+    document.querySelector<HTMLButtonElement>('[data-round="1"]')!.click();
+    document.querySelector<HTMLButtonElement>('[data-round="2"]')!.click();
+    await flush();
+    await flush();
+    expect(document.querySelector<HTMLElement>('.results-r2')!.hidden).toBe(false);
+    expect(globe.munis['2900207']).toEqual(r(1, 1));
+    app.dispose();
+  });
+
+  it('first-round files that fail to load leave the areas without data', async () => {
+    history.replaceState(null, '', '/?turno=1');
+    const globe = new FakeGlobe();
+    const d = deps(globe, []);
+    d.round1.abroadCities = () => Promise.reject(new Error('404'));
+    d.round1.municipalities = () => Promise.reject(new Error('404'));
+    const app = await createApp(d);
+    globe.pick!({ kind: 'uf', uf: 'BA' });
+    await flush();
+    expect(globe.munis).toEqual({});
+    expect(document.querySelector('.results-r1 .scope')?.textContent).toBe('Bahia');
+    app.dispose();
+  });
+
+  it('a failed second-round municipality list leaves the state without data', async () => {
+    const globe = new FakeGlobe();
+    const d = deps(globe, []);
+    d.api.municipalities = () => Promise.reject(new Error('503'));
+    const app = await createApp(d);
+    globe.pick!({ kind: 'uf', uf: 'BA' });
+    await flush();
+    expect(globe.munis).toEqual({});
+    app.dispose();
+  });
+
+  it('a round switch loses to a newer round or state chosen while it loads', async () => {
+    const globe = new FakeGlobe();
+    const app = await createApp(deps(globe, []));
+    globe.pick!({ kind: 'uf', uf: 'BA' });
+    await flush();
+    const round = (n: number) => document.querySelector<HTMLButtonElement>(`[data-round="${n}"]`)!.click();
+    round(1);
+    await flush();
+    round(2);
+    await flush();
+    // first round already loaded: the switch goes straight to the municipalities
+    round(1);
+    round(2);
+    await flush();
+    expect(document.querySelector<HTMLElement>('.results-r2')!.hidden).toBe(false);
+    expect(globe.munis['2900207']).toEqual(r(1, 1));
+    round(1);
+    globe.pick!({ kind: 'uf', uf: 'SP' });
+    await flush();
+    await flush();
+    expect(globe.views.at(-1)).toEqual({ kind: 'uf', uf: 'SP' });
+    expect(document.querySelector<HTMLElement>('.results-r1')!.hidden).toBe(false);
     app.dispose();
   });
 });
