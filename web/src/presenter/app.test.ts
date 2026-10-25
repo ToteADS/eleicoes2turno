@@ -45,7 +45,7 @@ class FakeGlobe implements GlobeRenderer {
   zoomOut() {}
 }
 
-function deps(globe: FakeGlobe, calls: string[]): AppDeps {
+function deps(globe: FakeGlobe, calls: string[], presence: AppDeps['api']['presence'] = () => Promise.resolve({ online: 3 })): AppDeps {
   return {
     root: document.body,
     globe,
@@ -53,6 +53,7 @@ function deps(globe: FakeGlobe, calls: string[]): AppDeps {
       summary: () => { calls.push('summary'); return Promise.resolve(summary); },
       municipalities: (uf: string) => { calls.push('mun:' + uf); return Promise.resolve({ updatedAt: '', items: { '2900207': r(1, 1) } }); },
       abroadCities: () => Promise.resolve({ updatedAt: '', items: {} }),
+      presence,
       config: () => Promise.resolve({ ads: { adsenseClient: '', slotResults: '', slotMobile: '', house: { image: '/a.svg', link: 'https://tapp.solutions', alt: 'Tapp' } } }),
     },
     geo: {
@@ -67,6 +68,7 @@ function deps(globe: FakeGlobe, calls: string[]): AppDeps {
       abroadCities: () => Promise.resolve({ '30627': m([4, 1, 0]) }),
     },
     pollMs: 60_000,
+    tabId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
   };
 }
 
@@ -85,6 +87,24 @@ describe('app', () => {
     expect((document.querySelector('#fCountry') as HTMLSelectElement).value).toBe('ALL');
     expect(document.body.textContent).toContain('Todos os países');
     app.dispose();
+  });
+
+  it('shows the online counter in the top bar and stops its heartbeat on dispose', async () => {
+    const sent: unknown[] = [];
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      const app = await createApp(deps(new FakeGlobe(), [], (dto) => { sent.push(dto.toJson()); return Promise.resolve({ online: 3 }); }));
+      await flush();
+      const pill = document.querySelector<HTMLElement>('#topbar .online')!;
+      expect(pill.hidden).toBe(false);
+      expect(pill.textContent).toBe('3 pessoas online agora');
+      expect(sent).toEqual([{ id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' }]);
+      app.dispose();
+      vi.advanceTimersByTime(5 * 60_000);
+      expect(sent).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('choosing a state focuses it and loads its municipalities once', async () => {

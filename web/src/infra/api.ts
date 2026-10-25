@@ -1,4 +1,5 @@
-import type { AreaListResponse, PublicConfig, Summary } from '../domain/types';
+import type { PresenceDto } from '../domain/dtos/presence-dto';
+import type { AreaListResponse, PresenceAnswer, PublicConfig, Summary } from '../domain/types';
 
 /** Client of our own API (never the TSE directly). */
 export class ApiClient {
@@ -21,6 +22,18 @@ export class ApiClient {
 
   config(): Promise<PublicConfig> {
     return this.get('/config');
+  }
+
+  /** Heartbeat of this tab; answers how many tabs are online. */
+  async presence(dto: PresenceDto): Promise<PresenceAnswer> {
+    const res = await this.fetchFn(this.base + '/presence', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(dto.toJson()),
+      cache: 'no-store',
+    });
+    if (!res.ok) throw new Error(`POST /presence: ${res.status}`);
+    return (await res.json()) as PresenceAnswer;
   }
 
   private async get<T>(path: string): Promise<T> {

@@ -66,5 +66,7 @@
   "r1_runoff": "RUNOFF",
   "r1_show_all": "See all {n} candidates",
   "r1_show_less": "Show fewer",
-  "r1_final": "Final result · {pct} of polling sections"
+  "r1_final": "Final result · {pct} of polling sections",
+  "online_count": "{n} people online now",
+  "online_count_one": "{n} person online now"
 }

@@ -13,7 +13,8 @@ import (
 	"eleicoes2turno/pkg/response"
 )
 
-// Per-IP API limits. A page load makes ~3 API calls, then one every 30 s.
+// Per-IP API limits. A page load makes ~4 API calls, then one every 30 s plus
+// a presence heartbeat every 60 s.
 const (
 	apiRPS   = 30
 	apiBurst = 60
@@ -24,6 +25,7 @@ type Deps struct {
 	Config      config.Config
 	Store       repositories.ResultStore
 	RateLimiter *middlewares.RateLimiter
+	Presence    repositories.PresenceTracker
 }
 
 // New builds the full HTTP handler.
@@ -45,6 +47,12 @@ func New(d Deps) http.Handler {
 		AdsenseClient: cfg.AdsenseClient, SlotResults: cfg.AdsenseSlotResults, SlotMobile: cfg.AdsenseSlotMobile,
 		HouseImage: cfg.HouseAdImage, HouseLink: cfg.HouseAdLink, HouseAlt: cfg.HouseAdAlt,
 	})).Methods(http.MethodGet)
+	api.Handle("/presence", handlers.NewPresence(d.Presence)).Methods(http.MethodPost)
+	// any other method would otherwise fall through to the SPA catch-all below
+	api.HandleFunc("/presence", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Allow", http.MethodPost)
+		response.Error(w, http.StatusMethodNotAllowed, "method_not_allowed")
+	})
 	api.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		response.Error(w, http.StatusNotFound, "not_found")
 	})

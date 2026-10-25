@@ -79,6 +79,11 @@ export interface PublicConfig {
   };
 }
 
+/** Answer to a presence heartbeat: tabs online right now. */
+export interface PresenceAnswer {
+  online: number;
+}
+
 /** City abroad with polling stations; country grouping is ours (TSE has none). */
 export interface AbroadCity {
   cd: string;

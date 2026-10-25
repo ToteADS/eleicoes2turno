@@ -1,3 +1,4 @@
+import { PresenceDto } from '../domain/dtos/presence-dto';
 import { ApiClient, latest } from './api';
 
 const ok = (body: unknown) => Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
@@ -12,6 +13,24 @@ describe('ApiClient', () => {
     await api.abroadCities();
     await api.config();
     expect(calls).toEqual(['/api/v1/summary', '/api/v1/uf/ba/municipalities', '/api/v1/abroad/cities', '/api/v1/config']);
+  });
+
+  it('posts the presence DTO as JSON and returns the online count', async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    const fetchFn = ((url: string, init?: RequestInit) => { calls.push({ url, init }); return ok({ online: 42 }); }) as unknown as typeof fetch;
+    const got = await new ApiClient('/api/v1', fetchFn).presence(new PresenceDto('abcdefgh-1234'));
+    expect(got).toEqual({ online: 42 });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe('/api/v1/presence');
+    expect(calls[0].init?.method).toBe('POST');
+    expect(new Headers(calls[0].init?.headers).get('Content-Type')).toBe('application/json');
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ id: 'abcdefgh-1234' });
+    expect(calls[0].init?.cache).toBe('no-store');
+  });
+
+  it('throws on presence HTTP errors', async () => {
+    const fetchFn = (() => Promise.resolve(new Response('x', { status: 429 }))) as unknown as typeof fetch;
+    await expect(new ApiClient('/api/v1', fetchFn).presence(new PresenceDto('abcdefgh'))).rejects.toThrow('POST /presence: 429');
   });
 
   it('throws on HTTP errors', async () => {

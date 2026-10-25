@@ -66,5 +66,7 @@
   "r1_runoff": "2º TURNO",
   "r1_show_all": "Ver todos os {n} candidatos",
   "r1_show_less": "Ver menos",
-  "r1_final": "Resultado final · {pct} das seções"
+  "r1_final": "Resultado final · {pct} das seções",
+  "online_count": "{n} pessoas online agora",
+  "online_count_one": "{n} pessoa online agora"
 }

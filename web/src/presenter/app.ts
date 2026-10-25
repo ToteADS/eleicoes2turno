@@ -1,7 +1,9 @@
 import { initialFilters, setCity, setCountry, setUf, type FilterState } from '../domain/filters';
+import type { PresenceDto } from '../domain/dtos/presence-dto';
 import { ranking, sumMulti } from '../domain/multi';
-import type { AbroadCity, AreaListResponse, AreaResult, MultiResult, PublicConfig, Round, Round1Summary, Summary } from '../domain/types';
+import type { AbroadCity, AreaListResponse, AreaResult, MultiResult, PresenceAnswer, PublicConfig, Round, Round1Summary, Summary } from '../domain/types';
 import { latest } from '../infra/api';
+import { tabId } from '../infra/tab-id';
 import type { AreaCollection, GlobePick, GlobeRenderer, GlobeView } from '../infra/globe';
 import { t } from '../i18n';
 import { AdSlot } from './ad-slot';
@@ -10,6 +12,7 @@ import { FiltersCard } from './filters-card';
 import { GlobeControls } from './globe-controls';
 import { ResultsCard } from './results-card';
 import { NullGlobe } from './null-globe';
+import { OnlineCounter } from './online-counter';
 import { Round1Card } from './round1-card';
 import { round1Fills } from './round1-paint';
 import { RoundToggle } from './round-toggle';
@@ -26,6 +29,7 @@ export interface AppDeps {
     municipalities(uf: string): Promise<AreaListResponse>;
     abroadCities(): Promise<AreaListResponse>;
     config(): Promise<PublicConfig>;
+    presence(dto: PresenceDto): Promise<PresenceAnswer>;
   };
   geo: {
     states(): Promise<AreaCollection>;
@@ -40,6 +44,8 @@ export interface AppDeps {
     abroadCities(): Promise<Record<string, MultiResult>>;
   };
   pollMs?: number;
+  /** id of this tab for the online counter (default: random, kept per session) */
+  tabId?: string;
 }
 
 const DEFAULT_CONFIG: PublicConfig = {
@@ -87,6 +93,8 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
   const round1Card = new Round1Card($('.results-r1'));
   const roundToggle = new RoundToggle(filtersCard.roundSlot);
   const tooltip = new Tooltip($('.tip'));
+  const online = new OnlineCounter($('#topbar'), d.api, d.tabId ?? tabId());
+  online.start();
 
   let round: Round = readRound(window.location.search);
   let filters = initialFilters();
@@ -297,6 +305,7 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
   return {
     dispose() {
       window.clearInterval(timer);
+      online.stop();
       window.removeEventListener('resize', updatePadding);
       for (const slot of adSlots) slot.stop();
     },

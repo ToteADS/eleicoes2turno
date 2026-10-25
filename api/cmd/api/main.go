@@ -15,6 +15,7 @@ import (
 	"eleicoes2turno/internal/domain/entities"
 	"eleicoes2turno/internal/domain/services"
 	"eleicoes2turno/internal/infra/cache"
+	"eleicoes2turno/internal/infra/presence"
 	"eleicoes2turno/internal/infra/tse"
 	"eleicoes2turno/internal/presentation/middlewares"
 	"eleicoes2turno/internal/presentation/routes"
@@ -23,6 +24,15 @@ import (
 )
 
 const catalogPath = "ele2026/6258/config/mun-e006258-cm.json"
+
+// Presence counter: a tab heartbeats every 60 s and counts as online for
+// 150 s (two missed beats). Expired tabs are dropped every 10 s; past 300k
+// tracked tabs new ones are not added (the count is still served).
+const (
+	presenceTTL   = 150 * time.Second
+	presencePrune = 10 * time.Second
+	presenceMax   = 300_000
+)
 
 func main() {
 	log := logger.New(os.Stdout)
@@ -44,10 +54,12 @@ func main() {
 
 	limiter := middlewares.NewRateLimiter(30, 60, cfg.TrustCloudflare)
 	limiter.StartCleanup(time.Minute, ctx.Done())
+	tracker := presence.NewMemoryTracker(presenceTTL, presenceMax)
+	trackerDone := tracker.Start(presencePrune, ctx.Done())
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           routes.New(routes.Deps{Config: *cfg, Store: store, RateLimiter: limiter}),
+		Handler:           routes.New(routes.Deps{Config: *cfg, Store: store, RateLimiter: limiter, Presence: tracker}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      20 * time.Second,
@@ -68,6 +80,7 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Error("shutdown", "err", err)
 	}
+	<-trackerDone
 	log.Info("stopped")
 }
 

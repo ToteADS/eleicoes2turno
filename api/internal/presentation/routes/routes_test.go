@@ -11,6 +11,7 @@ import (
 
 	"eleicoes2turno/internal/domain/entities"
 	"eleicoes2turno/internal/infra/cache"
+	"eleicoes2turno/internal/infra/presence"
 	"eleicoes2turno/pkg/config"
 )
 
@@ -22,12 +23,17 @@ func newRouter(t *testing.T, cfg config.Config) (http.Handler, *cache.MemoryStor
 	}
 	cfg.StaticDir = dir
 	store := cache.NewMemoryStore()
-	return New(Deps{Config: cfg, Store: store}), store
+	tracker := presence.NewMemoryTracker(150*time.Second, 1000)
+	return New(Deps{Config: cfg, Store: store, Presence: tracker}), store
 }
 
 func get(h http.Handler, path string) *httptest.ResponseRecorder {
+	return do(h, "GET", path, "")
+}
+
+func do(h http.Handler, method, path, body string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
-	r := httptest.NewRequest("GET", path, nil)
+	r := httptest.NewRequest(method, path, strings.NewReader(body))
 	r.RemoteAddr = "192.0.2.10:1234"
 	h.ServeHTTP(rec, r)
 	return rec
@@ -80,5 +86,36 @@ func TestRoutes_RateLimitOnlyOnAPI(t *testing.T) {
 	}
 	if !apiLimited || staticLimited {
 		t.Errorf("apiLimited=%v staticLimited=%v", apiLimited, staticLimited)
+	}
+}
+
+func TestRoutes_Presence(t *testing.T) {
+	h, _ := newRouter(t, config.Config{})
+	do(h, "POST", "/api/v1/presence", `{"id":"tab-one-0001"}`)
+	rec := do(h, "POST", "/api/v1/presence", `{"id":"tab-two-0002"}`)
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != `{"online":2}` {
+		t.Fatalf("code=%d body=%s", rec.Code, rec.Body)
+	}
+	if rec.Header().Get("Cache-Control") != "no-store" || rec.Header().Get("Content-Security-Policy") == "" {
+		t.Errorf("headers = %v", rec.Header())
+	}
+	if rec := do(h, "POST", "/api/v1/presence", `{"id":"bad id"}`); rec.Code != http.StatusBadRequest {
+		t.Errorf("invalid id = %d", rec.Code)
+	}
+	for _, method := range []string{"GET", "PUT", "DELETE"} {
+		if rec := do(h, method, "/api/v1/presence", ""); rec.Code != http.StatusMethodNotAllowed || rec.Header().Get("Allow") != "POST" {
+			t.Errorf("%s = %d (Allow %q), want 405", method, rec.Code, rec.Header().Get("Allow"))
+		}
+	}
+}
+
+func TestRoutes_PresenceIsRateLimited(t *testing.T) {
+	h, _ := newRouter(t, config.Config{})
+	limited := false
+	for i := 0; i < 100 && !limited; i++ {
+		limited = do(h, "POST", "/api/v1/presence", `{"id":"tab-one-0001"}`).Code == http.StatusTooManyRequests
+	}
+	if !limited {
+		t.Error("presence is not rate limited")
 	}
 }

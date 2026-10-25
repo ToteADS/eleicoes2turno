@@ -37,6 +37,19 @@ data/  scripts que geram as geometrias e a tabela do exterior
 - **Segurança:** CSP estrita, HSTS, limite de requisições por IP, CORS restrito, usuário não-root.
   Não há segredos: todos os valores de configuração são públicos.
 
+## API
+
+Tudo sob `/api/v1`, com limite de requisições por IP (30 req/s, rajada de 60).
+
+| Rota | Uso |
+|---|---|
+| `GET /summary` | Brasil, UFs, exterior, países e metadados de atualização |
+| `GET /uf/{uf}/municipalities` | Resultados dos municípios de uma UF (sigla minúscula) |
+| `GET /abroad/cities` | Resultados das cidades do exterior |
+| `GET /config` | Configuração pública do site (anúncios) |
+| `POST /presence` | Batimento da aba aberta (`{"id":"<id aleatório da aba>"}`, até 256 bytes, id com 8–64 caracteres `[A-Za-z0-9-]`). Responde `{"online": n}` com `Cache-Control: no-store`; entrada inválida → 400, outro método → 405. Detalhes em [`docs/contador-online.md`](docs/contador-online.md) |
+| `GET /healthz` | Healthcheck (fora de `/api/v1`) |
+
 ## Rodar localmente
 
 ```bash
