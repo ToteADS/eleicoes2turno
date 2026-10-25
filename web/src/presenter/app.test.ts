@@ -1,4 +1,4 @@
-import type { AreaResult, MultiResult, Round1Summary, Summary } from '../domain/types';
+import type { AreaResult, MultiResult, Notice, Round1Summary, Summary } from '../domain/types';
 import type { AreaCollection, AreaPaint, GlobeHover, GlobePick, GlobeRenderer, GlobeView, Padding, RotationController } from '../infra/globe';
 import { createApp, type AppDeps } from './app';
 
@@ -45,7 +45,10 @@ class FakeGlobe implements GlobeRenderer {
   zoomOut() {}
 }
 
-function deps(globe: FakeGlobe, calls: string[], presence: AppDeps['api']['presence'] = () => Promise.resolve({ online: 3 })): AppDeps {
+function deps(
+  globe: FakeGlobe, calls: string[], presence: AppDeps['api']['presence'] = () => Promise.resolve({ online: 3 }),
+  notice: AppDeps['api']['notice'] = () => Promise.resolve(null),
+): AppDeps {
   return {
     root: document.body,
     globe,
@@ -54,6 +57,7 @@ function deps(globe: FakeGlobe, calls: string[], presence: AppDeps['api']['prese
       municipalities: (uf: string) => { calls.push('mun:' + uf); return Promise.resolve({ updatedAt: '', items: { '2900207': r(1, 1) } }); },
       abroadCities: () => Promise.resolve({ updatedAt: '', items: {} }),
       presence,
+      notice,
       config: () => Promise.resolve({ ads: { adsenseClient: '', slotResults: '', slotMobile: '', house: { image: '/a.svg', link: 'https://tapp.solutions', alt: 'Tapp' } } }),
     },
     geo: {
@@ -105,6 +109,69 @@ describe('app', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  describe('notice banner', () => {
+    const published: Notice = { title: 'Apuração pausada pelo TSE', body: 'Números parciais.', linkUrl: 'https://www.tse.jus.br/comunicacao/noticias', linkLabel: 'Saiba mais', updatedAt: '' };
+    const banner = () => document.querySelector<HTMLElement>('#topbar .notice')!;
+
+    it('shows the server notice at the top of the filters card and follows it on every poll', async () => {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+      try {
+        vi.setSystemTime(new Date('2026-10-25T20:31:00Z'));
+        let current: Notice | null = published;
+        const app = await createApp(deps(new FakeGlobe(), [], undefined, () => Promise.resolve(current)));
+        expect(document.querySelector('#topbar')!.firstElementChild).toBe(banner());
+        expect(banner().hidden).toBe(false);
+        expect(banner().querySelector('.notice-title')!.textContent).toBe('Apuração pausada pelo TSE');
+        expect(banner().querySelector<HTMLAnchorElement>('.notice-link')!.href).toBe('https://www.tse.jus.br/comunicacao/noticias');
+        current = null;
+        vi.advanceTimersByTime(60_000);
+        await flush();
+        expect(banner().hidden).toBe(true);
+        app.dispose();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('warns on its own when the TSE file is over 10 min old, and a failed fetch keeps the last notice', async () => {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+      try {
+        vi.setSystemTime(new Date('2026-10-25T20:45:00Z')); // file is 17:30:00 in Brasília = 20:30 UTC
+        let fail = false;
+        const app = await createApp(deps(new FakeGlobe(), [], undefined, () => (fail ? Promise.reject(new Error('down')) : Promise.resolve(null))));
+        expect(banner().hidden).toBe(false);
+        expect(banner().dataset.kind).toBe('auto');
+        expect(banner().querySelector('.notice-title')!.textContent).toBe('O TSE não atualiza os resultados há 15 min');
+        fail = true;
+        vi.advanceTimersByTime(60_000);
+        await flush();
+        expect(banner().querySelector('.notice-title')!.textContent).toBe('O TSE não atualiza os resultados há 16 min');
+        app.dispose();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('is hidden in the first round and comes back in the second', async () => {
+      const app = await createApp(deps(new FakeGlobe(), [], undefined, () => Promise.resolve(published)));
+      expect(banner().hidden).toBe(false);
+      document.querySelector<HTMLButtonElement>('[data-round="1"]')!.click();
+      await flush();
+      expect(banner().hidden).toBe(true);
+      document.querySelector<HTMLButtonElement>('[data-round="2"]')!.click();
+      await flush();
+      expect(banner().hidden).toBe(false);
+      app.dispose();
+    });
+
+    it('starting on the first round shows no banner', async () => {
+      history.replaceState(null, '', '/?turno=1');
+      const app = await createApp(deps(new FakeGlobe(), [], undefined, () => Promise.resolve(published)));
+      expect(banner().hidden).toBe(true);
+      app.dispose();
+    });
   });
 
   it('choosing a state focuses it and loads its municipalities once', async () => {

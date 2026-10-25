@@ -95,3 +95,13 @@ export interface AbroadCity {
 }
 
 export type Region = 'N' | 'NE' | 'CO' | 'SE' | 'S';
+
+/** Site-wide notice published by the operator (plain text, never HTML). */
+export interface Notice {
+  title: string;
+  body: string;
+  /** absolute https URL, or '' for none */
+  linkUrl: string;
+  linkLabel: string;
+  updatedAt: string;
+}

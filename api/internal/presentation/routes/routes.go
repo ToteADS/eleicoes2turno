@@ -26,6 +26,7 @@ type Deps struct {
 	Store       repositories.ResultStore
 	RateLimiter *middlewares.RateLimiter
 	Presence    repositories.PresenceTracker
+	Notice      repositories.NoticeStore
 }
 
 // New builds the full HTTP handler.
@@ -51,6 +52,14 @@ func New(d Deps) http.Handler {
 	// any other method would otherwise fall through to the SPA catch-all below
 	api.HandleFunc("/presence", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Allow", http.MethodPost)
+		response.Error(w, http.StatusMethodNotAllowed, "method_not_allowed")
+	})
+	notice := handlers.NewNotice(d.Notice, cfg.NoticeAdminToken)
+	api.HandleFunc("/notice", notice.Get).Methods(http.MethodGet)
+	api.HandleFunc("/notice", notice.Put).Methods(http.MethodPut)
+	api.HandleFunc("/notice", notice.Delete).Methods(http.MethodDelete)
+	api.HandleFunc("/notice", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Allow", "GET, PUT, DELETE")
 		response.Error(w, http.StatusMethodNotAllowed, "method_not_allowed")
 	})
 	api.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

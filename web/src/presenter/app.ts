@@ -1,7 +1,7 @@
 import { initialFilters, setCity, setCountry, setUf, type FilterState } from '../domain/filters';
 import type { PresenceDto } from '../domain/dtos/presence-dto';
 import { ranking, sumMulti } from '../domain/multi';
-import type { AbroadCity, AreaListResponse, AreaResult, MultiResult, PresenceAnswer, PublicConfig, Round, Round1Summary, Summary } from '../domain/types';
+import type { AbroadCity, AreaListResponse, AreaResult, MultiResult, Notice, PresenceAnswer, PublicConfig, Round, Round1Summary, Summary } from '../domain/types';
 import { latest } from '../infra/api';
 import { tabId } from '../infra/tab-id';
 import type { AreaCollection, GlobePick, GlobeRenderer, GlobeView } from '../infra/globe';
@@ -11,6 +11,7 @@ import { CheckedAgo } from './checked-ago';
 import { CreatorCredit } from './creator-credit';
 import { FiltersCard } from './filters-card';
 import { GlobeControls } from './globe-controls';
+import { bannerFor, NoticeBanner } from './notice-banner';
 import { ResultsCard } from './results-card';
 import { NullGlobe } from './null-globe';
 import { OnlineCounter } from './online-counter';
@@ -31,6 +32,7 @@ export interface AppDeps {
     abroadCities(): Promise<AreaListResponse>;
     config(): Promise<PublicConfig>;
     presence(dto: PresenceDto): Promise<PresenceAnswer>;
+    notice(): Promise<Notice | null>;
   };
   geo: {
     states(): Promise<AreaCollection>;
@@ -95,12 +97,15 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
   const round1Card = new Round1Card($('.results-r1'));
   const roundToggle = new RoundToggle(filtersCard.roundSlot);
   const tooltip = new Tooltip($('.tip'));
+  const noticeBanner = new NoticeBanner($('#topbar'));
   const online = new OnlineCounter($('#topbar'), d.api, d.tabId ?? tabId());
   online.start();
 
   let round: Round = readRound(window.location.search);
   let filters = initialFilters();
   let summary: Summary | null = null;
+  // operator notice (second round only); a failed fetch keeps the last one known
+  let notice: Notice | null = null;
   let municipalities: Record<string, AreaResult> = {};
   let muniGeo: AreaCollection | null = null;
   let abroadResults: Record<string, AreaResult> = {};
@@ -120,10 +125,13 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
     d.geo.abroadCities().catch(() => [] as AbroadCity[]),
   ]);
   let failedPolls = 0;
+  const loadNotice = () => d.api.notice().then((n) => { notice = n; }, () => undefined);
   const loadRound2 = async () => {
+    const noticeLoaded = loadNotice();
     summary = await d.api.summary().catch(() => { failedPolls++; return null; });
     if (summary) checked.mark();
     abroadResults = (await d.api.abroadCities().catch(() => null))?.items ?? {};
+    await noticeLoaded;
   };
   await (round === 1 ? loadRound1() : loadRound2());
 
@@ -174,7 +182,9 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
     if (round === 1) {
       const scope = describeScope<MultiResult>(filters, { ...common, summary: r1, municipalities: r1Munis, abroadResults: r1Abroad, sum: sumMulti });
       round1Card.render(scope, r1?.candidates ?? []);
+      noticeBanner.render(null); // the first round is a final snapshot
     } else {
+      noticeBanner.render(bannerFor(notice, summary));
       const scope = describeScope(filters, { ...common, summary, municipalities, abroadResults });
       const staleTime = summary ? new Date(summary.updatedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '';
       resultsCard.render(scope, summary?.candidates ?? [], isStale(summary, failedPolls), staleTime);
@@ -294,6 +304,7 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
       d.api.summary().catch(() => null),
       d.api.abroadCities().catch(() => null),
       filters.uf ? d.api.municipalities(filters.uf).catch(() => null) : Promise.resolve(null),
+      loadNotice(),
     ]).finally(() => { polling = false; });
     if (s) {
       summary = s;

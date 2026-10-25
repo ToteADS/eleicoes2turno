@@ -70,5 +70,9 @@
   "r1_show_less": "Ver menos",
   "r1_final": "Resultado final · {pct} de las secciones",
   "online_count": "{n} personas en línea ahora",
-  "online_count_one": "{n} persona en línea ahora"
+  "online_count_one": "{n} persona en línea ahora",
+  "notice_more": "Más información",
+  "notice_stale_title": "El TSE no actualiza los resultados hace {n} min",
+  "notice_stale_body": "Los números de abajo pueden estar desactualizados. Siga las noticias oficiales.",
+  "notice_new_tab": "se abre en una pestaña nueva"
 }

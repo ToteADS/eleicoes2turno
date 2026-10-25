@@ -6,6 +6,10 @@
   --lula: #d7262d;
   --flavio: #1f5fe0;
   --online: #16a34a;
+  --notice-bg: #fff8eb;
+  --notice-line: #f3c46f;
+  --notice-ink: #6b3f00;
+  --notice-accent: #b45309;
   --glass: rgba(255, 255, 255, 0.84);
   --shadow: 0 10px 40px rgba(17, 20, 24, 0.1), 0 1px 2px rgba(17, 20, 24, 0.06);
   --radius: 14px;
@@ -62,6 +66,24 @@ a { color: inherit; }
 .f input { background-image: none; min-width: 190px; }
 .f select:focus-visible, .f input:focus-visible { border-bottom-color: var(--text); }
 .f :disabled { color: #b8bcc4; border-bottom-color: #eceef1; cursor: not-allowed; background-image: none; }
+
+/* ---------- notice banner: amber strip at the top of the filters card ---------- */
+.notice {
+  display: flex; align-items: flex-start; gap: 10px; max-width: 640px; margin: 0 0 12px; padding: 10px 12px;
+  background: var(--notice-bg); color: var(--notice-ink); border: 1px solid var(--notice-line); border-radius: 10px;
+}
+.notice[hidden], .notice-link[hidden], .notice-body[hidden] { display: none; }
+.notice-icon { flex: none; display: inline-flex; margin-top: 1px; color: var(--notice-accent); }
+.notice-text { flex: 1 1 220px; min-width: 0; }
+.notice-title { display: block; font-size: 13.5px; font-weight: 700; line-height: 1.3; }
+.notice-body { margin: 3px 0 0; font-size: 12.5px; line-height: 1.4; overflow-wrap: anywhere; }
+.notice-link {
+  flex: none; align-self: center; display: inline-flex; align-items: center; gap: 4px; min-height: 32px; padding: 6px 12px;
+  border: 1px solid var(--notice-line); border-radius: 999px; background: #fff; color: var(--notice-accent);
+  font-size: 12.5px; font-weight: 700; text-decoration: none; white-space: nowrap;
+}
+.notice-link:hover { background: #fff3dc; }
+.notice-link:focus-visible { outline: 2px solid var(--notice-accent); outline-offset: 2px; }
 
 /* ---------- round toggle (1º turno | 2º turno) ---------- */
 .topbar h1 .t-short { display: none; }
@@ -229,6 +251,10 @@ a { color: inherit; }
   .filters { display: none; gap: 14px 16px; margin-top: 12px; }
   .topbar.open .filters { display: grid; grid-template-columns: 1fr 1fr; }
   .online { top: calc(100% + 6px); font-size: 11.5px; padding: 4px 10px 4px 8px; }
+  .notice { max-width: none; flex-wrap: wrap; gap: 6px 8px; margin: 0 0 10px; padding: 8px 10px; }
+  .notice-title { font-size: 13px; }
+  .notice-body { font-size: 12px; line-height: 1.35; }
+  .notice-link { margin-left: 26px; min-height: 30px; padding: 4px 11px; font-size: 12px; align-self: flex-start; }
   .topbar.open .online { display: none; } /* the open filters sheet would push it over the globe */
   .f { min-width: 0; }
   .f select, .f input { width: 100%; max-width: none; min-width: 0; font-size: 16px; min-height: 40px; }

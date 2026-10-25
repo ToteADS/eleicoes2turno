@@ -33,6 +33,24 @@ describe('ApiClient', () => {
     await expect(new ApiClient('/api/v1', fetchFn).presence(new PresenceDto('abcdefgh'))).rejects.toThrow('POST /presence: 429');
   });
 
+  it('fetches the notice uncached and reads it through the model', async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    const fetchFn = ((url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return ok({ notice: { title: 'Aviso', body: 'b', linkUrl: 'javascript:x', linkLabel: '', updatedAt: '' } });
+    }) as unknown as typeof fetch;
+    const got = await new ApiClient('/api/v1', fetchFn).notice();
+    expect(got).toEqual({ title: 'Aviso', body: 'b', linkUrl: '', linkLabel: '', updatedAt: '' });
+    expect(calls[0].url).toBe('/api/v1/notice');
+    expect(calls[0].init?.cache).toBe('no-store');
+  });
+
+  it('answers null when there is no notice and throws on notice HTTP errors', async () => {
+    expect(await new ApiClient('/api/v1', (() => ok({ notice: null })) as unknown as typeof fetch).notice()).toBeNull();
+    const fail = (() => Promise.resolve(new Response('x', { status: 500 }))) as unknown as typeof fetch;
+    await expect(new ApiClient('/api/v1', fail).notice()).rejects.toThrow('GET /notice: 500');
+  });
+
   it('throws on HTTP errors', async () => {
     const fetchFn = (() => Promise.resolve(new Response('x', { status: 503 }))) as unknown as typeof fetch;
     await expect(new ApiClient('/api/v1', fetchFn).summary()).rejects.toThrow('503');

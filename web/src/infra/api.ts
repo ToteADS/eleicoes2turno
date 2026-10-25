@@ -1,5 +1,6 @@
 import type { PresenceDto } from '../domain/dtos/presence-dto';
-import type { AreaListResponse, PresenceAnswer, PublicConfig, Summary } from '../domain/types';
+import type { AreaListResponse, Notice, PresenceAnswer, PublicConfig, Summary } from '../domain/types';
+import { noticeFromJson } from './notice-model';
 
 /** Client of our own API (never the TSE directly). */
 export class ApiClient {
@@ -22,6 +23,13 @@ export class ApiClient {
 
   config(): Promise<PublicConfig> {
     return this.get('/config');
+  }
+
+  /** The site-wide notice, or null when there is none. Never cached. */
+  async notice(): Promise<Notice | null> {
+    const res = await this.fetchFn(this.base + '/notice', { cache: 'no-store' });
+    if (!res.ok) throw new Error(`GET /notice: ${res.status}`);
+    return noticeFromJson(await res.json());
   }
 
   /** Heartbeat of this tab; answers how many tabs are online. */

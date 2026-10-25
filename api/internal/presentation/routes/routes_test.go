@@ -11,6 +11,7 @@ import (
 
 	"eleicoes2turno/internal/domain/entities"
 	"eleicoes2turno/internal/infra/cache"
+	"eleicoes2turno/internal/infra/notice"
 	"eleicoes2turno/internal/infra/presence"
 	"eleicoes2turno/pkg/config"
 )
@@ -24,7 +25,7 @@ func newRouter(t *testing.T, cfg config.Config) (http.Handler, *cache.MemoryStor
 	cfg.StaticDir = dir
 	store := cache.NewMemoryStore()
 	tracker := presence.NewMemoryTracker(150*time.Second, 1000)
-	return New(Deps{Config: cfg, Store: store, Presence: tracker}), store
+	return New(Deps{Config: cfg, Store: store, Presence: tracker, Notice: notice.NewMemoryStore()}), store
 }
 
 func get(h http.Handler, path string) *httptest.ResponseRecorder {
@@ -117,5 +118,47 @@ func TestRoutes_PresenceIsRateLimited(t *testing.T) {
 	}
 	if !limited {
 		t.Error("presence is not rate limited")
+	}
+}
+
+func doAuth(h http.Handler, method, path, body, auth string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(method, path, strings.NewReader(body))
+	r.RemoteAddr = "192.0.2.11:1234"
+	if auth != "" {
+		r.Header.Set("Authorization", auth)
+	}
+	h.ServeHTTP(rec, r)
+	return rec
+}
+
+func TestRoutes_Notice(t *testing.T) {
+	h, _ := newRouter(t, config.Config{NoticeAdminToken: "tok-123"})
+	if rec := get(h, "/api/v1/notice"); rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != `{"notice":null}` {
+		t.Fatalf("get = %d %s", rec.Code, rec.Body)
+	}
+	if rec := doAuth(h, "PUT", "/api/v1/notice", `{"title":"Aviso"}`, ""); rec.Code != http.StatusUnauthorized {
+		t.Errorf("put without token = %d", rec.Code)
+	}
+	if rec := doAuth(h, "PUT", "/api/v1/notice", `{"title":"Aviso"}`, "Bearer tok-123"); rec.Code != http.StatusOK {
+		t.Fatalf("put = %d %s", rec.Code, rec.Body)
+	}
+	if rec := get(h, "/api/v1/notice"); !strings.Contains(rec.Body.String(), `"title":"Aviso"`) || rec.Header().Get("Cache-Control") != "no-store" {
+		t.Errorf("get after put = %s", rec.Body)
+	}
+	if rec := doAuth(h, "DELETE", "/api/v1/notice", "", "Bearer tok-123"); rec.Code != http.StatusOK {
+		t.Errorf("delete = %d", rec.Code)
+	}
+	for _, m := range []string{"POST", "PATCH"} {
+		if rec := do(h, m, "/api/v1/notice", ""); rec.Code != http.StatusMethodNotAllowed || rec.Header().Get("Allow") != "GET, PUT, DELETE" {
+			t.Errorf("%s = %d", m, rec.Code)
+		}
+	}
+}
+
+func TestRoutes_NoticeWritesDisabledWithoutToken(t *testing.T) {
+	h, _ := newRouter(t, config.Config{})
+	if rec := doAuth(h, "PUT", "/api/v1/notice", `{"title":"Aviso"}`, "Bearer "); rec.Code != http.StatusNotFound {
+		t.Errorf("put = %d", rec.Code)
 	}
 }

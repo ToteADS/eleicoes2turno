@@ -59,3 +59,21 @@ func TestGet_Singleton(t *testing.T) {
 		t.Error("Get must return the same instance")
 	}
 }
+
+func TestLoad_Notice(t *testing.T) {
+	for _, k := range []string{"NOTICE_ADMIN_TOKEN", "NOTICE_TITLE", "NOTICE_BODY", "NOTICE_LINK_URL", "NOTICE_LINK_LABEL"} {
+		t.Setenv(k, "")
+	}
+	if c := Load(); c.NoticeAdminToken != "" || c.NoticeTitle != "" || c.NoticeBody != "" || c.NoticeLinkURL != "" || c.NoticeLinkLabel != "" {
+		t.Errorf("notice defaults = %+v", c)
+	}
+	t.Setenv("NOTICE_ADMIN_TOKEN", "tok")
+	t.Setenv("NOTICE_TITLE", "Apuração pausada")
+	t.Setenv("NOTICE_BODY", "Corpo")
+	t.Setenv("NOTICE_LINK_URL", "https://www.tse.jus.br")
+	t.Setenv("NOTICE_LINK_LABEL", "Saiba mais")
+	c := Load()
+	if c.NoticeAdminToken != "tok" || c.NoticeTitle != "Apuração pausada" || c.NoticeBody != "Corpo" || c.NoticeLinkURL != "https://www.tse.jus.br" || c.NoticeLinkLabel != "Saiba mais" {
+		t.Errorf("notice env = %+v", c)
+	}
+}

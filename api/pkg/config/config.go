@@ -1,5 +1,6 @@
 // Package config loads settings from the environment (and an optional .env).
-// Every value here is public; the app needs no secrets.
+// Every value here is public except NoticeAdminToken, which guards the
+// notice write endpoints and must only come from the environment.
 package config
 
 import (
@@ -30,6 +31,14 @@ type Config struct {
 	HouseAdImage       string
 	HouseAdLink        string
 	HouseAdAlt         string
+
+	// NoticeAdminToken enables PUT/DELETE /api/v1/notice ("" disables them).
+	NoticeAdminToken string
+	// Notice seeded at boot (NoticeTitle "" seeds none), so a restart keeps it.
+	NoticeTitle     string
+	NoticeBody      string
+	NoticeLinkURL   string
+	NoticeLinkLabel string
 }
 
 var (
@@ -68,6 +77,12 @@ func Load() Config {
 		HouseAdImage:       str("HOUSE_AD_IMAGE", "/ads/tapp-banner-v2.svg"),
 		HouseAdLink:        str("HOUSE_AD_LINK", "https://tapp.solutions"),
 		HouseAdAlt:         str("HOUSE_AD_ALT", "Tapp Solutions"),
+
+		NoticeAdminToken: str("NOTICE_ADMIN_TOKEN", ""),
+		NoticeTitle:      str("NOTICE_TITLE", ""),
+		NoticeBody:       str("NOTICE_BODY", ""),
+		NoticeLinkURL:    str("NOTICE_LINK_URL", ""),
+		NoticeLinkLabel:  str("NOTICE_LINK_LABEL", ""),
 	}
 }
 

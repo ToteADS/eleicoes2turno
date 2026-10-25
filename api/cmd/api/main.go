@@ -12,9 +12,11 @@ import (
 	"time"
 
 	"eleicoes2turno/assets"
+	"eleicoes2turno/internal/domain/dtos"
 	"eleicoes2turno/internal/domain/entities"
 	"eleicoes2turno/internal/domain/services"
 	"eleicoes2turno/internal/infra/cache"
+	"eleicoes2turno/internal/infra/notice"
 	"eleicoes2turno/internal/infra/presence"
 	"eleicoes2turno/internal/infra/tse"
 	"eleicoes2turno/internal/presentation/middlewares"
@@ -56,10 +58,12 @@ func main() {
 	limiter.StartCleanup(time.Minute, ctx.Done())
 	tracker := presence.NewMemoryTracker(presenceTTL, presenceMax)
 	trackerDone := tracker.Start(presencePrune, ctx.Done())
+	notices := notice.NewMemoryStore()
+	seedNotice(log, cfg, notices)
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           routes.New(routes.Deps{Config: *cfg, Store: store, RateLimiter: limiter, Presence: tracker}),
+		Handler:           routes.New(routes.Deps{Config: *cfg, Store: store, RateLimiter: limiter, Presence: tracker, Notice: notices}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      20 * time.Second,
@@ -114,4 +118,19 @@ func loadCatalog(ctx context.Context, log *slog.Logger, client *tse.Client) []en
 	}
 	log.Warn("TSE catalog unavailable, using bundled snapshot", "err", err, "entries", len(cat))
 	return cat
+}
+
+// seedNotice publishes the NOTICE_* notice from the environment, if any, so a
+// restart does not drop a notice that was meant to stay up.
+func seedNotice(log *slog.Logger, cfg *config.Config, store *notice.MemoryStore) {
+	if cfg.NoticeTitle == "" {
+		return
+	}
+	dto := dtos.NoticeDTO{Title: cfg.NoticeTitle, Body: cfg.NoticeBody, LinkURL: cfg.NoticeLinkURL, LinkLabel: cfg.NoticeLinkLabel}.Normalize()
+	if err := dto.Validate(); err != nil {
+		log.Warn("NOTICE_* env ignored", "err", err)
+		return
+	}
+	store.Set(dto.ToEntity(time.Now()))
+	log.Info("notice seeded from env")
 }

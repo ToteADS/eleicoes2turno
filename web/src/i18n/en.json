@@ -70,5 +70,9 @@
   "r1_show_less": "Show fewer",
   "r1_final": "Final result · {pct} of polling sections",
   "online_count": "{n} people online now",
-  "online_count_one": "{n} person online now"
+  "online_count_one": "{n} person online now",
+  "notice_more": "Learn more",
+  "notice_stale_title": "The TSE has not updated the results for {n} min",
+  "notice_stale_body": "The numbers below may be out of date. Follow the official news.",
+  "notice_new_tab": "opens in a new tab"
 }
