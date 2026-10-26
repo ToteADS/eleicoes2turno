@@ -120,3 +120,46 @@ func TestParseResult_NotElectedBeforeDeclaration(t *testing.T) {
 		}
 	}
 }
+
+func TestParseResult_MathDefined(t *testing.T) {
+	// real BR file of 25/10/2026 22:10: "md": "e", nobody flagged "e": "s" yet
+	r, cands, err := ParseResult(readFixture(t, "br-math-defined.json"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !r.MathDefined {
+		t.Error("MathDefined = false, want true for md=e")
+	}
+	if r.Final {
+		t.Error("Final = true, want false for tf=n")
+	}
+	if r.Lula != 64242718 || r.Flavio != 59819188 {
+		t.Errorf("votes = %d/%d, want 64242718/59819188", r.Lula, r.Flavio)
+	}
+	for _, c := range cands {
+		if c.Elected {
+			t.Errorf("candidate %d elected without the TSE flag", c.Number)
+		}
+	}
+}
+
+func TestParseResult_NotMathDefined(t *testing.T) {
+	for _, name := range []string{"released-sample.json", "br-zeroed.json"} {
+		r, _, err := ParseResult(readFixture(t, name))
+		if err != nil {
+			t.Fatalf("%s: unexpected error: %v", name, err)
+		}
+		if r.MathDefined {
+			t.Errorf("%s: MathDefined = true, want false", name)
+		}
+	}
+	for _, md := range []string{`""`, `"n"`, `"s"`} {
+		r, _, err := ParseResult([]byte(`{"md":` + md + `}`))
+		if err != nil {
+			t.Fatalf("md=%s: unexpected error: %v", md, err)
+		}
+		if r.MathDefined {
+			t.Errorf("md=%s: MathDefined = true, want false", md)
+		}
+	}
+}

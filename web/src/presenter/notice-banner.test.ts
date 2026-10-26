@@ -64,6 +64,37 @@ describe('bannerFor', () => {
     expect(bannerFor(null, summary({}, [lula(false), flavio(true)]), FILE)?.title).toBe('Flávio Bolsonaro é eleito presidente do Brasil');
   });
 
+  it('announces the mathematical winner once the TSE marks the result as decided', () => {
+    const s = summary({ st: 499154, ts: 499248, l: 64242718, f: 59819188, mathDefined: true }, [lula(false), flavio(false)]);
+    expect(bannerFor(null, s, FILE + 60 * 60_000)).toEqual({
+      kind: 'elected',
+      title: 'Lula está matematicamente eleito',
+      body: 'Segundo o TSE, o resultado já está definido com 99,98% das seções totalizadas.',
+      linkUrl: TSE_RESULTS_URL,
+      linkLabel: 'Ver no TSE',
+    });
+    expect(bannerFor(null, summary({ l: 100, f: 900, mathDefined: true }, [lula(false), flavio(false)]), FILE)?.title).toBe('Flávio Bolsonaro está matematicamente eleito');
+  });
+
+  it('prefers the declared winner text over the mathematical one', () => {
+    const s = summary({ l: 100, f: 900, mathDefined: true }, [lula(true), flavio(false)]);
+    expect(bannerFor(null, s, FILE)?.title).toBe('Lula é eleito presidente do Brasil');
+  });
+
+  it('elects nobody on a tie, even when the result is decided', () => {
+    expect(bannerFor(null, summary({ l: 500, f: 500, mathDefined: true }, [lula(false), flavio(false)]), FILE)).toBeNull();
+  });
+
+  it('translates the mathematical winner banner', () => {
+    const s = summary({ st: 1, ts: 1, l: 9, f: 1, mathDefined: true }, [lula(false), flavio(false)]);
+    setLocale('en');
+    expect(bannerFor(null, s, FILE)).toMatchObject({ title: 'Lula is mathematically elected', body: 'According to the TSE the result is already decided with 100,00% of sections counted.', linkLabel: 'See on the TSE' });
+    setLocale('es');
+    expect(bannerFor(null, s, FILE)).toMatchObject({ title: 'Lula está matemáticamente electo', linkLabel: 'Ver en el TSE' });
+    expect(bannerFor(null, s, FILE)?.body).toBe('Según el TSE, el resultado ya está definido con 100,00% de las secciones escrutadas.');
+    setLocale('pt');
+  });
+
   it('keeps the server notice over the winner', () => {
     expect(bannerFor(notice, summary({}, [lula(true), flavio(false)]), FILE)?.kind).toBe('server');
   });

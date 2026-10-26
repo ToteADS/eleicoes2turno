@@ -1,7 +1,7 @@
-import { DISPLAY_NAME, electedCandidate } from '../domain/elected';
+import { DISPLAY_NAME, resolveWinner } from '../domain/elected';
 import { formatInt, formatPct } from '../domain/format';
 import { share } from '../domain/split';
-import type { Candidate } from '../domain/types';
+import type { AreaResult, Candidate } from '../domain/types';
 import { t } from '../i18n';
 import { NumberTween } from './number-tween';
 import { resultRowData, resultRowsHtml } from './result-rows';
@@ -52,7 +52,8 @@ export class ResultsCard {
     return this.el.querySelector<HTMLElement>('[data-ref="checked"]')!;
   }
 
-  render(scope: Scope, candidates: Candidate[], stale: boolean, staleTime: string, animate = false): void {
+  /** `national` is the Brazil total: with the TSE's "md" flag it decides the mathematical winner in every view. */
+  render(scope: Scope, candidates: Candidate[], stale: boolean, staleTime: string, animate = false, national: AreaResult | null = null): void {
     const $ = (ref: string) => this.el.querySelector<HTMLElement>(`[data-ref="${ref}"]`)!;
     const r = scope.result;
     // only a new value of the area already on screen animates
@@ -75,8 +76,9 @@ export class ResultsCard {
     status.textContent = !r ? t('status_no_data') : !r.released ? t('status_waiting') : '';
 
     const list = candidates.length ? candidates : DEFAULT_CANDIDATES;
-    // national office: the TSE's elected flag holds in every view and replaces "LIDERA"
-    const winner = electedCandidate(list);
+    // national office: the winner (TSE flag, or the national leader once the TSE marks
+    // the result as mathematically decided) holds in every view and replaces "LIDERA"
+    const winner = resolveWinner(list, national)?.candidate ?? null;
     for (const n of [13, 22]) {
       const c = list.find((x) => x.n === n) ?? DEFAULT_CANDIDATES.find((x) => x.n === n)!;
       const row = this.el.querySelector<HTMLElement>(`[data-cand="${n}"]`)!;

@@ -212,3 +212,24 @@ func TestSummary_ElectedJSON(t *testing.T) {
 		t.Errorf("flavio elected must be present and false: %s", rec.Body)
 	}
 }
+
+func TestSummary_MathDefinedJSON(t *testing.T) {
+	for _, md := range []bool{true, false} {
+		store := cache.NewMemoryStore()
+		store.SetSummary(entities.Snapshot{UpdatedAt: time.Now(), BR: entities.AreaResult{MathDefined: md}})
+		rec := serve(http.HandlerFunc(NewData(store).Summary), httptest.NewRequest("GET", "/api/v1/summary", nil))
+		var body struct {
+			BR map[string]any `json:"br"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode: %v (%s)", err, rec.Body)
+		}
+		got, present := body.BR["mathDefined"]
+		if md && got != true {
+			t.Errorf("mathDefined = %v, want true: %s", got, rec.Body)
+		}
+		if !md && present {
+			t.Errorf("mathDefined must be omitted while false: %s", rec.Body)
+		}
+	}
+}

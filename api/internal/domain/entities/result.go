@@ -29,6 +29,9 @@ type AreaResult struct {
 	Released bool `json:"released"`
 	// Final is true once the TSE flags the count as finished ("tf": "s").
 	Final bool `json:"final,omitempty"`
+	// MathDefined is true once the TSE marks the result as mathematically
+	// decided ("md": "e"); the TSE does not document the field.
+	MathDefined bool `json:"mathDefined,omitempty"`
 }
 
 // Candidate identifies a runoff candidate.

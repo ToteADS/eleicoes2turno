@@ -83,5 +83,7 @@
   "results_elected": "ELEITO",
   "elected_title": "{name} é eleito presidente do Brasil",
   "elected_body": "Resultado declarado pelo TSE com {pct} das seções totalizadas.",
-  "elected_link": "Ver no TSE"
+  "elected_link": "Ver no TSE",
+  "elected_math_title": "{name} está matematicamente eleito",
+  "elected_math_body": "Segundo o TSE, o resultado já está definido com {pct} das seções totalizadas."
 }

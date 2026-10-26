@@ -15,6 +15,8 @@ export interface BaseResult {
   released: boolean;
   /** TSE finished the count ("tf": "s"); omitted by the API while false */
   final?: boolean;
+  /** TSE marked the result as mathematically decided ("md": "e", undocumented); omitted while false */
+  mathDefined?: boolean;
 }
 
 /** Second round: Lula (l) × Flávio (f). */

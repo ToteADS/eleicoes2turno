@@ -202,7 +202,7 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
       noticeBanner.render(bannerFor(notice, summary));
       const scope = describeScope(filters, { ...common, summary, municipalities, abroadResults });
       const staleTime = summary ? new Date(summary.updatedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '';
-      resultsCard.render(scope, summary?.candidates ?? [], isStale(summary, failedPolls), staleTime, animate);
+      resultsCard.render(scope, summary?.candidates ?? [], isStale(summary, failedPolls), staleTime, animate, summary?.br ?? null);
     }
     updatePadding();
   };

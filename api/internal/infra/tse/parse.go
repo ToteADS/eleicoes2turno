@@ -15,7 +15,10 @@ type rawResult struct {
 	Time string `json:"hg"`
 	// Final is "s" once the TSE finished the count (totalização finalizada).
 	Final string `json:"tf"`
-	S     struct {
+	// MathDefined is "e" once the TSE marks the result as mathematically
+	// decided (undocumented field, read as "matematicamente definido – eleito").
+	MathDefined string `json:"md"`
+	S           struct {
 		Counted string `json:"st"`
 		Total   string `json:"ts"`
 	} `json:"s"`
@@ -55,7 +58,7 @@ func ParseResult(b []byte) (entities.AreaResult, []entities.Candidate, error) {
 		return entities.AreaResult{}, nil, fmt.Errorf("decode tse result: %w", err)
 	}
 
-	r := entities.AreaResult{Date: raw.Date, Time: raw.Time, Final: raw.Final == "s"}
+	r := entities.AreaResult{Date: raw.Date, Time: raw.Time, Final: raw.Final == "s", MathDefined: raw.MathDefined == "e"}
 	fields := []struct {
 		dst *int64
 		src string

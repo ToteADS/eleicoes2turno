@@ -1,4 +1,4 @@
-import { displayName, electedCandidate } from '../domain/elected';
+import { displayName, resolveWinner } from '../domain/elected';
 import { formatPct } from '../domain/format';
 import type { Notice, Summary } from '../domain/types';
 import { t } from '../i18n';
@@ -9,7 +9,7 @@ export const TSE_NEWS_URL = 'https://www.tse.jus.br/comunicacao/noticias';
 export const TSE_RESULTS_URL = 'https://resultados.tse.jus.br/oficial/app/index.html';
 
 export interface BannerContent {
-  /** server: published by the operator; elected: the TSE declared the winner; auto: the TSE file stopped changing */
+  /** server: published by the operator; elected: the TSE declared the winner or marked the result as mathematically decided; auto: the TSE file stopped changing */
   kind: 'server' | 'elected' | 'auto';
   title: string;
   body: string;
@@ -27,19 +27,21 @@ export function tseFileTime(dg: string, hg: string): number | null {
 
 /**
  * What the banner shows: the server notice when there is one; otherwise the
- * winner once the TSE flags a candidate as elected; otherwise, once the TSE has
+ * winner once the TSE flags a candidate as elected (or marks the result as
+ * mathematically decided, "md": "e"); otherwise, once the TSE has
  * released results, a warning if its file is over 10 min old.
  */
 export function bannerFor(notice: Notice | null, summary: Summary | null, now = Date.now()): BannerContent | null {
   if (notice) return { kind: 'server', title: notice.title, body: notice.body, linkUrl: notice.linkUrl, linkLabel: notice.linkLabel };
   const br = summary?.br;
-  const winner = electedCandidate(summary?.candidates);
+  const winner = resolveWinner(summary?.candidates, br);
   if (winner) {
     const counted = br && br.ts > 0 ? Math.min(br.st, br.ts) / br.ts : 1;
+    const math = winner.kind === 'mathematical';
     return {
       kind: 'elected',
-      title: t('elected_title', { name: displayName(winner) }),
-      body: t('elected_body', { pct: formatPct(counted) }),
+      title: t(math ? 'elected_math_title' : 'elected_title', { name: displayName(winner.candidate) }),
+      body: t(math ? 'elected_math_body' : 'elected_body', { pct: formatPct(counted) }),
       linkUrl: TSE_RESULTS_URL,
       linkLabel: t('elected_link'),
     };

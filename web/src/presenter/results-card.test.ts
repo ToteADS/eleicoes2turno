@@ -152,6 +152,33 @@ describe('ResultsCard elected badge', () => {
     expect(visible(q, '[data-cand="13"] .lead')).toBe(true);
   });
 
+  it('shows ELEITO for the national leader once the TSE marks the result as decided', () => {
+    const { c, q } = card();
+    const national = r(64242718, 59819188, { mathDefined: true });
+    c.render({ crumb: 'Brasil', title: 'Santa Catarina', sub: '', result: r(300, 700) }, tse(false), false, '', false, national);
+    expect(visible(q, '[data-cand="13"] .won')).toBe(true);
+    expect(q('[data-cand="13"]').classList.contains('elected')).toBe(true);
+    expect(visible(q, '[data-cand="22"] .lead')).toBe(false);
+    expect(visible(q, '[data-cand="22"] .won')).toBe(false);
+  });
+
+  it('keeps LIDERA without the mathematical flag or on a national tie', () => {
+    const { c, q } = card();
+    c.render(brasil(r(600, 400)), tse(false), false, '', false, r(600, 400));
+    expect(visible(q, '[data-cand="13"] .lead')).toBe(true);
+    expect(visible(q, '[data-cand="13"] .won')).toBe(false);
+    c.render(brasil(r(600, 400)), tse(false), false, '', false, r(500, 500, { mathDefined: true }));
+    expect(visible(q, '[data-cand="13"] .lead')).toBe(true);
+    expect(visible(q, '[data-cand="13"] .won')).toBe(false);
+  });
+
+  it('lets the TSE flag win over the mathematical leader', () => {
+    const { c, q } = card();
+    c.render(brasil(r(600, 400)), tse(false, true), false, '', false, r(600, 400, { mathDefined: true }));
+    expect(visible(q, '[data-cand="22"] .won')).toBe(true);
+    expect(visible(q, '[data-cand="13"] .won')).toBe(false);
+  });
+
   it('translates the badge', () => {
     setLocale('en');
     expect(card().q('[data-cand="13"] .won').textContent).toBe('ELECTED');
