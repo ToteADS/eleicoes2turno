@@ -13,6 +13,8 @@ export interface BaseResult {
   dg: string;
   hg: string;
   released: boolean;
+  /** TSE finished the count ("tf": "s"); omitted by the API while false */
+  final?: boolean;
 }
 
 /** Second round: Lula (l) × Flávio (f). */
@@ -31,6 +33,10 @@ export interface Candidate {
   name: string;
   party: string;
   sqcand: string;
+  /** declared elected by the TSE itself ("e": "s"); never inferred from votes */
+  elected?: boolean;
+  /** TSE status text, e.g. "Eleito" ('' while undeclared) */
+  status?: string;
 }
 
 export interface Summary {

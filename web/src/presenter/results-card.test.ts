@@ -108,3 +108,55 @@ describe('ResultsCard live updates', () => {
     expect(c.checkedSlot.textContent).toBe('verificado há 3 s');
   });
 });
+
+describe('ResultsCard elected badge', () => {
+  const tse = (lulaElected: boolean, flavioElected = false): Candidate[] => [
+    { n: 13, name: 'LULA', party: 'PT', sqcand: '1', elected: lulaElected, status: lulaElected ? 'Eleito' : '' },
+    { n: 22, name: 'FLAVIO BOLSONARO', party: 'PL', sqcand: '2', elected: flavioElected, status: flavioElected ? 'Eleito' : '' },
+  ];
+  const visible = (q: (s: string) => HTMLElement, sel: string) => !q(sel).hasAttribute('hidden');
+
+  it('shows LIDERA for the leader while nobody is elected', () => {
+    const { c, q } = card();
+    c.render(brasil(r(600, 400)), tse(false), false, '');
+    expect(visible(q, '[data-cand="13"] .lead')).toBe(true);
+    expect(visible(q, '[data-cand="13"] .won')).toBe(false);
+    expect(visible(q, '[data-cand="22"] .won')).toBe(false);
+  });
+
+  it('shows ELEITO from the TSE flag and drops every LIDERA', () => {
+    const { c, q } = card();
+    c.render(brasil(r(600, 400)), tse(true), false, '');
+    expect(visible(q, '[data-cand="13"] .won')).toBe(true);
+    expect(q('[data-cand="13"] .won').textContent).toBe('ELEITO');
+    expect(q('[data-cand="13"]').classList.contains('elected')).toBe(true);
+    expect(visible(q, '[data-cand="13"] .lead')).toBe(false);
+    expect(visible(q, '[data-cand="22"] .won')).toBe(false);
+    expect(visible(q, '[data-cand="22"] .lead')).toBe(false);
+  });
+
+  it('keeps the badge in a state where the winner trails', () => {
+    const { c, q } = card();
+    c.render({ crumb: 'Brasil', title: 'Santa Catarina', sub: '', result: r(300, 700) }, tse(true), false, '');
+    expect(visible(q, '[data-cand="13"] .won')).toBe(true);
+    expect(visible(q, '[data-cand="22"] .lead')).toBe(false);
+  });
+
+  it('clears the badge if the flag goes away', () => {
+    const { c, q } = card();
+    c.render(brasil(r(600, 400)), tse(false, true), false, '');
+    expect(visible(q, '[data-cand="22"] .won')).toBe(true);
+    c.render(brasil(r(600, 400)), tse(false), false, '');
+    expect(visible(q, '[data-cand="22"] .won')).toBe(false);
+    expect(q('[data-cand="22"]').classList.contains('elected')).toBe(false);
+    expect(visible(q, '[data-cand="13"] .lead')).toBe(true);
+  });
+
+  it('translates the badge', () => {
+    setLocale('en');
+    expect(card().q('[data-cand="13"] .won').textContent).toBe('ELECTED');
+    setLocale('es');
+    expect(card().q('[data-cand="13"] .won').textContent).toBe('ELECTO');
+    setLocale('pt');
+  });
+});

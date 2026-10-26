@@ -13,7 +13,9 @@ import (
 type rawResult struct {
 	Date string `json:"dg"`
 	Time string `json:"hg"`
-	S    struct {
+	// Final is "s" once the TSE finished the count (totalização finalizada).
+	Final string `json:"tf"`
+	S     struct {
 		Counted string `json:"st"`
 		Total   string `json:"ts"`
 	} `json:"s"`
@@ -36,6 +38,9 @@ type rawResult struct {
 					Sqcand string `json:"sqcand"`
 					Name   string `json:"nmu"`
 					Votes  string `json:"vap"`
+					// Elected is "s" once the TSE declares the candidate elected.
+					Elected string `json:"e"`
+					Status  string `json:"st"`
 				} `json:"cand"`
 			} `json:"par"`
 		} `json:"agr"`
@@ -50,7 +55,7 @@ func ParseResult(b []byte) (entities.AreaResult, []entities.Candidate, error) {
 		return entities.AreaResult{}, nil, fmt.Errorf("decode tse result: %w", err)
 	}
 
-	r := entities.AreaResult{Date: raw.Date, Time: raw.Time}
+	r := entities.AreaResult{Date: raw.Date, Time: raw.Time, Final: raw.Final == "s"}
 	fields := []struct {
 		dst *int64
 		src string
@@ -86,7 +91,10 @@ func ParseResult(b []byte) (entities.AreaResult, []entities.Candidate, error) {
 					case entities.NumberFlavio:
 						r.Flavio = votes
 					}
-					cands = append(cands, entities.Candidate{Number: num, Name: c.Name, Party: par.Party, Sqcand: c.Sqcand})
+					cands = append(cands, entities.Candidate{
+						Number: num, Name: c.Name, Party: par.Party, Sqcand: c.Sqcand,
+						Elected: c.Elected == "s", Status: c.Status,
+					})
 				}
 			}
 		}

@@ -82,3 +82,41 @@ func TestParseResult_BadNumber(t *testing.T) {
 		t.Error("expected error for non-numeric field")
 	}
 }
+
+func TestParseResult_Elected(t *testing.T) {
+	r, cands, err := ParseResult(readFixture(t, "br-elected.json"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !r.Final {
+		t.Error("Final = false, want true for tf=s")
+	}
+	got := map[int]bool{}
+	for _, c := range cands {
+		got[c.Number] = c.Elected
+		if c.Number == 13 && c.Status != "Eleito" {
+			t.Errorf("Lula status = %q, want Eleito", c.Status)
+		}
+		if c.Number == 22 && c.Status != "" {
+			t.Errorf("Flavio status = %q, want empty", c.Status)
+		}
+	}
+	if !got[13] || got[22] {
+		t.Errorf("elected = %v, want only 13", got)
+	}
+}
+
+func TestParseResult_NotElectedBeforeDeclaration(t *testing.T) {
+	r, cands, err := ParseResult(readFixture(t, "released-sample.json"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if r.Final {
+		t.Error("Final = true, want false for tf=n")
+	}
+	for _, c := range cands {
+		if c.Elected {
+			t.Errorf("candidate %d elected before the TSE flag", c.Number)
+		}
+	}
+}

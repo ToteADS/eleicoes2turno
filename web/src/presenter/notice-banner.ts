@@ -1,13 +1,16 @@
+import { displayName, electedCandidate } from '../domain/elected';
+import { formatPct } from '../domain/format';
 import type { Notice, Summary } from '../domain/types';
 import { t } from '../i18n';
 
 /** TSE file older than this while results are out: assume the count is stuck. */
 export const STALE_AFTER_MS = 10 * 60_000;
 export const TSE_NEWS_URL = 'https://www.tse.jus.br/comunicacao/noticias';
+export const TSE_RESULTS_URL = 'https://resultados.tse.jus.br/oficial/app/index.html';
 
 export interface BannerContent {
-  /** server: published by the operator; auto: the TSE file stopped changing */
-  kind: 'server' | 'auto';
+  /** server: published by the operator; elected: the TSE declared the winner; auto: the TSE file stopped changing */
+  kind: 'server' | 'elected' | 'auto';
   title: string;
   body: string;
   linkUrl: string;
@@ -23,12 +26,24 @@ export function tseFileTime(dg: string, hg: string): number | null {
 }
 
 /**
- * What the banner shows: the server notice when there is one; otherwise, once
- * the TSE has released results, a warning if its file is over 10 min old.
+ * What the banner shows: the server notice when there is one; otherwise the
+ * winner once the TSE flags a candidate as elected; otherwise, once the TSE has
+ * released results, a warning if its file is over 10 min old.
  */
 export function bannerFor(notice: Notice | null, summary: Summary | null, now = Date.now()): BannerContent | null {
   if (notice) return { kind: 'server', title: notice.title, body: notice.body, linkUrl: notice.linkUrl, linkLabel: notice.linkLabel };
   const br = summary?.br;
+  const winner = electedCandidate(summary?.candidates);
+  if (winner) {
+    const counted = br && br.ts > 0 ? Math.min(br.st, br.ts) / br.ts : 1;
+    return {
+      kind: 'elected',
+      title: t('elected_title', { name: displayName(winner) }),
+      body: t('elected_body', { pct: formatPct(counted) }),
+      linkUrl: TSE_RESULTS_URL,
+      linkLabel: t('elected_link'),
+    };
+  }
   if (!br?.released) return null;
   const at = tseFileTime(br.dg, br.hg);
   if (at === null || now - at <= STALE_AFTER_MS) return null;
@@ -41,11 +56,14 @@ export function bannerFor(notice: Notice | null, summary: Summary | null, now = 
   };
 }
 
-const ICON = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><path fill="currentColor" d="M12 2.5 1.5 21h21L12 2.5Zm0 5.2 6.9 11.8H5.1L12 7.7Zm-1 3.8v4h2v-4h-2Zm0 5.2v2h2v-2h-2Z"/></svg>';
+const ICON_WARN = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><path fill="currentColor" d="M12 2.5 1.5 21h21L12 2.5Zm0 5.2 6.9 11.8H5.1L12 7.7Zm-1 3.8v4h2v-4h-2Zm0 5.2v2h2v-2h-2Z"/></svg>';
 
-/** Amber banner at the top of the filters card. Server text only ever goes through textContent. */
+const ICON_CHECK = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><path fill="currentColor" d="M12 1.5a10.5 10.5 0 1 0 0 21 10.5 10.5 0 0 0 0-21Zm-1.4 14.9-4.2-4.2 1.4-1.4 2.8 2.8 5.8-5.8 1.4 1.4-7.2 7.2Z"/></svg>';
+
+/** Amber banner (green once a winner is declared) at the top of the filters card. Server text only ever goes through textContent. */
 export class NoticeBanner {
   private readonly el: HTMLElement;
+  private readonly icon: HTMLElement;
   private readonly title: HTMLElement;
   private readonly body: HTMLElement;
   private readonly link: HTMLAnchorElement;
@@ -57,9 +75,10 @@ export class NoticeBanner {
     this.el.className = 'notice';
     this.el.setAttribute('role', 'status');
     this.el.hidden = true;
-    this.el.innerHTML = `<span class="notice-icon">${ICON}</span>
+    this.el.innerHTML = `<span class="notice-icon">${ICON_WARN}</span>
       <div class="notice-text"><strong class="notice-title"></strong><p class="notice-body"></p></div>
       <a class="notice-link" target="_blank" rel="noopener"><span></span> <span aria-hidden="true">→</span></a>`;
+    this.icon = this.el.querySelector('.notice-icon')!;
     this.title = this.el.querySelector('.notice-title')!;
     this.body = this.el.querySelector('.notice-body')!;
     this.link = this.el.querySelector('.notice-link')!;
@@ -74,6 +93,7 @@ export class NoticeBanner {
     this.el.hidden = !content;
     if (!content) return;
     this.el.dataset.kind = content.kind;
+    this.icon.innerHTML = content.kind === 'elected' ? ICON_CHECK : ICON_WARN;
     this.title.textContent = content.title;
     this.body.textContent = content.body;
     this.body.hidden = !content.body;

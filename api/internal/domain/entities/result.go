@@ -27,6 +27,8 @@ type AreaResult struct {
 	Time            string `json:"hg"`
 	// Released is false while the TSE still publishes zeros (before 17h).
 	Released bool `json:"released"`
+	// Final is true once the TSE flags the count as finished ("tf": "s").
+	Final bool `json:"final,omitempty"`
 }
 
 // Candidate identifies a runoff candidate.
@@ -35,6 +37,11 @@ type Candidate struct {
 	Name   string `json:"name"`
 	Party  string `json:"party"`
 	Sqcand string `json:"sqcand"`
+	// Elected comes only from the TSE's own flag ("e": "s"); it is never
+	// inferred from the vote count.
+	Elected bool `json:"elected"`
+	// Status is the TSE's status text for the candidate (e.g. "Eleito").
+	Status string `json:"status"`
 }
 
 // Snapshot is the national picture served by /summary.

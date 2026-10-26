@@ -79,5 +79,9 @@
   "notice_more": "Learn more",
   "notice_stale_title": "The TSE has not updated the results for {n} min",
   "notice_stale_body": "The numbers below may be out of date. Follow the official news.",
-  "notice_new_tab": "opens in a new tab"
+  "notice_new_tab": "opens in a new tab",
+  "results_elected": "ELECTED",
+  "elected_title": "{name} is elected president of Brazil",
+  "elected_body": "Result declared by the TSE with {pct} of polling sections counted.",
+  "elected_link": "See on the TSE"
 }

@@ -1,3 +1,4 @@
+import { DISPLAY_NAME, electedCandidate } from '../domain/elected';
 import { formatInt, formatPct } from '../domain/format';
 import { share } from '../domain/split';
 import type { Candidate } from '../domain/types';
@@ -11,7 +12,7 @@ const DEFAULT_CANDIDATES: Candidate[] = [
   { n: 13, name: 'LULA', party: 'PT', sqcand: '280002542548' },
   { n: 22, name: 'FLÁVIO BOLSONARO', party: 'PL', sqcand: '280002551544' },
 ];
-const DISPLAY_NAME: Record<number, string> = { 13: 'Lula', 22: 'Flávio Bolsonaro' };
+const CHECK = '<svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true" focusable="false"><path fill="currentColor" d="M6.2 11.6 2.6 8l1.2-1.2 2.4 2.4 6-6L13.4 4.4z"/></svg>';
 
 const votes = (v: number) => `${formatInt(v)} ${t('results_votes')}`;
 
@@ -37,7 +38,7 @@ export class ResultsCard {
         <div class="cand ${n === 13 ? 'l' : 'f'}" data-cand="${n}">
           <img alt="" width="60" height="74" loading="lazy" decoding="async">
           <div class="who"><div class="nm">${DISPLAY_NAME[n]}</div>
-            <div class="pt"><span data-ref="party"></span> <span class="lead" hidden>${t('results_leads')}</span></div>
+            <div class="pt"><span data-ref="party"></span> <span class="lead" hidden>${t('results_leads')}</span><span class="won" hidden>${CHECK}${t('results_elected')}</span></div>
             <div class="vt"></div></div>
           <div class="pc">–</div>
         </div>`).join('')}
@@ -74,6 +75,8 @@ export class ResultsCard {
     status.textContent = !r ? t('status_no_data') : !r.released ? t('status_waiting') : '';
 
     const list = candidates.length ? candidates : DEFAULT_CANDIDATES;
+    // national office: the TSE's elected flag holds in every view and replaces "LIDERA"
+    const winner = electedCandidate(list);
     for (const n of [13, 22]) {
       const c = list.find((x) => x.n === n) ?? DEFAULT_CANDIDATES.find((x) => x.n === n)!;
       const row = this.el.querySelector<HTMLElement>(`[data-cand="${n}"]`)!;
@@ -89,7 +92,9 @@ export class ResultsCard {
       const vt = row.querySelector<HTMLElement>('.vt')!;
       if (r?.released) this.numbers.set(vt, n === 13 ? r.l : r.f, votes, anim);
       else this.numbers.text(vt, '');
-      row.querySelector('.lead')!.toggleAttribute('hidden', mine === null || mine <= 0.5);
+      row.querySelector('.lead')!.toggleAttribute('hidden', winner !== null || mine === null || mine <= 0.5);
+      row.querySelector('.won')!.toggleAttribute('hidden', winner?.n !== n);
+      row.classList.toggle('elected', winner?.n === n);
     }
     (this.el.querySelector('.sl') as HTMLElement).style.flexGrow = String(s ?? 0.5);
     (this.el.querySelector('.sf') as HTMLElement).style.flexGrow = String(s === null ? 0.5 : 1 - s);

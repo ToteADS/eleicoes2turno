@@ -79,5 +79,9 @@
   "notice_more": "Saiba mais",
   "notice_stale_title": "O TSE não atualiza os resultados há {n} min",
   "notice_stale_body": "Os números abaixo podem estar desatualizados. Acompanhe as notícias oficiais.",
-  "notice_new_tab": "abre em nova aba"
+  "notice_new_tab": "abre em nova aba",
+  "results_elected": "ELEITO",
+  "elected_title": "{name} é eleito presidente do Brasil",
+  "elected_body": "Resultado declarado pelo TSE com {pct} das seções totalizadas.",
+  "elected_link": "Ver no TSE"
 }

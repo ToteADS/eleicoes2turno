@@ -176,3 +176,39 @@ func TestStatic(t *testing.T) {
 		t.Error("path traversal")
 	}
 }
+
+func TestSummary_ElectedJSON(t *testing.T) {
+	store := cache.NewMemoryStore()
+	store.SetSummary(entities.Snapshot{
+		UpdatedAt: time.Now(),
+		BR:        entities.AreaResult{Final: true},
+		Candidates: []entities.Candidate{
+			{Number: 13, Name: "LULA", Elected: true, Status: "Eleito"},
+			{Number: 22, Name: "FLAVIO BOLSONARO"},
+		},
+	})
+	rec := serve(http.HandlerFunc(NewData(store).Summary), httptest.NewRequest("GET", "/api/v1/summary", nil))
+	var body struct {
+		BR struct {
+			Final bool `json:"final"`
+		} `json:"br"`
+		Candidates []struct {
+			N       int    `json:"n"`
+			Elected *bool  `json:"elected"`
+			Status  string `json:"status"`
+		} `json:"candidates"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v (%s)", err, rec.Body)
+	}
+	if !body.BR.Final || len(body.Candidates) != 2 {
+		t.Fatalf("body = %s", rec.Body)
+	}
+	c0, c1 := body.Candidates[0], body.Candidates[1]
+	if c0.Elected == nil || !*c0.Elected || c0.Status != "Eleito" {
+		t.Errorf("lula = %+v", c0)
+	}
+	if c1.Elected == nil || *c1.Elected {
+		t.Errorf("flavio elected must be present and false: %s", rec.Body)
+	}
+}
