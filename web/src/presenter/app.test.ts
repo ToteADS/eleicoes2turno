@@ -1,5 +1,6 @@
 import type { AreaResult, MultiResult, Notice, Round1Summary, Summary } from '../domain/types';
 import type { AreaCollection, AreaPaint, GlobeHover, GlobePick, GlobeRenderer, GlobeView, Padding, PaintOptions, RotationController } from '../infra/globe';
+import type { MapOptions } from '../domain/map-options';
 import { createApp, type AppDeps } from './app';
 
 const r = (l: number, f: number): AreaResult => ({ el: 10, comp: 8, abst: 2, vv: l + f, vb: 0, vn: 0, l, f, st: 1, ts: 1, dg: '25/10/2026', hg: '17:30:00', released: true });
@@ -38,7 +39,12 @@ class FakeGlobe implements GlobeRenderer {
   setStates(_s: AreaCollection, ufs: Record<string, AreaPaint>, o?: PaintOptions) { this.states = ufs; this.animated.push(Boolean(o?.animate)); }
   setMunicipalities(_uf: string | null, _g: AreaCollection | null, items: Record<string, AreaPaint>, o?: PaintOptions) { this.munis = items; this.animated.push(Boolean(o?.animate)); }
   setAbroadCities() {}
-  focus(v: GlobeView) { this.views.push(v); }
+  /** every setMapOptions call, in order */
+  mapOptions: MapOptions[] = [];
+  setMapOptions(o: MapOptions) { this.mapOptions.push(o); }
+  /** whether the phone filters sheet was open at each focus */
+  sheetOpen: boolean[] = [];
+  focus(v: GlobeView) { this.views.push(v); this.sheetOpen.push(Boolean(document.querySelector('#topbar.open'))); }
   setPadding(_p: Padding) {}
   onPick(cb: (p: GlobePick) => void) { this.pick = cb; }
   onHover(cb: (h: GlobeHover | null) => void) { this.hover = cb; }
@@ -546,5 +552,112 @@ describe('app', () => {
       expect(document.querySelector('.results-r2')!.classList.contains('instant')).toBe(true);
       app.dispose();
     });
+  });
+});
+
+describe('app map options', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    history.replaceState(null, '', '/');
+  });
+  const slot = () => document.querySelector<HTMLElement>('#topbar .map-slot')!;
+  const type = () => document.querySelector<HTMLSelectElement>('#fMapType')!;
+  const box = () => document.querySelector<HTMLInputElement>('#fSections')!;
+
+  it('the filters card shows "Tipo de mapa" and the labels switch, defaults on the globe', async () => {
+    const globe = new FakeGlobe();
+    const app = await createApp(deps(globe, []));
+    expect(slot().hidden).toBe(false);
+    expect(slot().closest('.filters')).not.toBeNull();
+    expect(type().value).toBe('share');
+    expect(box().checked).toBe(false);
+    expect(globe.mapOptions.at(-1)).toEqual({ type: 'share', sectionLabels: false });
+    app.dispose();
+  });
+
+  it('switching the map type repaints right away (no tween) and lands in the URL', async () => {
+    const globe = new FakeGlobe();
+    const app = await createApp(deps(globe, []));
+    globe.animated = [];
+    type().value = 'leader';
+    type().dispatchEvent(new Event('change'));
+    expect(globe.mapOptions.at(-1)).toEqual({ type: 'leader', sectionLabels: false });
+    expect(globe.animated).toEqual([false, false]);
+    expect(location.search).toBe('?mapa=votos');
+    box().checked = true;
+    box().dispatchEvent(new Event('change'));
+    expect(globe.mapOptions.at(-1)).toEqual({ type: 'leader', sectionLabels: true });
+    expect(location.search).toBe('?mapa=votos&urnas=1');
+    app.dispose();
+  });
+
+  it('starts from the URL and keeps the options across polls', async () => {
+    history.replaceState(null, '', '/?mapa=votos&urnas=1');
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      const globe = new FakeGlobe();
+      const app = await createApp(deps(globe, []));
+      expect(type().value).toBe('leader');
+      expect(box().checked).toBe(true);
+      const n = globe.mapOptions.length;
+      vi.advanceTimersByTime(60_000);
+      await flush();
+      await flush();
+      expect(globe.mapOptions.length).toBeGreaterThan(n);
+      expect(globe.mapOptions.at(-1)).toEqual({ type: 'leader', sectionLabels: true });
+      expect(type().value).toBe('leader');
+      app.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('the first round hides both options and paints with its own colours, no labels', async () => {
+    history.replaceState(null, '', '/?mapa=votos&urnas=1');
+    const globe = new FakeGlobe();
+    const app = await createApp(deps(globe, []));
+    document.querySelector<HTMLButtonElement>('[data-round="1"]')!.click();
+    await flush();
+    await flush();
+    expect(slot().hidden).toBe(true);
+    expect(globe.mapOptions.at(-1)).toEqual({ type: 'share', sectionLabels: false });
+    expect(location.search).toBe('?mapa=votos&urnas=1&turno=1'); // the choice is kept for the way back
+    document.querySelector<HTMLButtonElement>('[data-round="2"]')!.click();
+    await flush();
+    await flush();
+    expect(slot().hidden).toBe(false);
+    expect(globe.mapOptions.at(-1)).toEqual({ type: 'leader', sectionLabels: true });
+    app.dispose();
+  });
+
+  it('opening straight on the first round hides them too', async () => {
+    history.replaceState(null, '', '/?turno=1&urnas=1');
+    const globe = new FakeGlobe();
+    const app = await createApp(deps(globe, []));
+    expect(slot().hidden).toBe(true);
+    expect(globe.mapOptions.at(-1)).toEqual({ type: 'share', sectionLabels: false });
+    app.dispose();
+  });
+});
+
+describe('app phone filters sheet', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    history.replaceState(null, '', '/');
+  });
+
+  it('closes the sheet before flying, so the flight uses the padding without it', async () => {
+    const globe = new FakeGlobe();
+    const app = await createApp(deps(globe, []));
+    document.querySelector<HTMLButtonElement>('.filters-toggle')!.click();
+    expect(document.querySelector('#topbar.open')).not.toBeNull();
+    const uf = document.querySelector<HTMLSelectElement>('#fUf')!;
+    uf.value = 'BA';
+    uf.dispatchEvent(new Event('change'));
+    await flush();
+    await flush();
+    expect(globe.views.at(-1)).toEqual({ kind: 'uf', uf: 'BA' });
+    expect(globe.sheetOpen.at(-1)).toBe(false);
+    app.dispose();
   });
 });

@@ -1,4 +1,5 @@
 import type { FeatureCollection, MultiPolygon, Polygon } from 'geojson';
+import type { MapOptions } from '../domain/map-options';
 import type { AbroadCity, AreaResult, Region } from '../domain/types';
 
 export type AreaCollection = FeatureCollection<Polygon | MultiPolygon>;
@@ -59,6 +60,11 @@ export interface GlobeRenderer {
   setStates(states: AreaCollection, ufs: Record<string, AreaPaint>, opts?: PaintOptions): void;
   setMunicipalities(uf: string | null, geo: AreaCollection | null, items: Record<string, AreaPaint>, opts?: PaintOptions): void;
   setAbroadCities(cities: AbroadCity[], items: Record<string, AreaPaint>, opts?: PaintOptions): void;
+  /**
+   * Map type and section labels for the second-round results (solid first-round fills
+   * ignore the type). Takes effect on the next set* call; labels toggle at once.
+   */
+  setMapOptions(o: MapOptions): void;
   focus(view: GlobeView): void;
   setPadding(p: Padding): void;
   onPick(cb: (pick: GlobePick) => void): void;

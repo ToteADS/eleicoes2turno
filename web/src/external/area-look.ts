@@ -1,11 +1,14 @@
 import { mixColor } from '../domain/color';
 import { leaderSide, share } from '../domain/split';
 import { lerp } from '../domain/tween';
+import type { MapType } from '../domain/map-options';
 import type { AreaResult } from '../domain/types';
 
 export const RED = '#d7262d';
 export const BLUE = '#1f5fe0';
 export const GHOST = '#e3e6eb';
+/** "Mais votos": an exact tie (votes, no leader). Darker than GHOST so it does not read as "no data". */
+export const TIE = '#a7adb8';
 
 /**
  * How a second-round area is drawn: where the red × blue line sits (null = no split,
@@ -22,9 +25,18 @@ export interface AreaLook {
 
 const LEAD = { L: RED, R: BLUE, X: GHOST } as const;
 
-export function lookOf(r: AreaResult | undefined): AreaLook {
+/**
+ * 'share': the red × blue split. 'leader' ("Mais votos"): no split, the whole area in the
+ * leader's colour (TIE on an exact tie), so a leader change tweens the colour in OKLab.
+ */
+export function lookOf(r: AreaResult | undefined, type: MapType = 'share'): AreaLook {
   const s = share(r);
   if (s === null) return { share: null, west: GHOST, east: GHOST, lead: GHOST };
+  if (type === 'leader') {
+    const side = leaderSide(r);
+    const c = side === 'X' ? TIE : LEAD[side];
+    return { share: null, west: c, east: c, lead: c };
+  }
   return { share: s, west: RED, east: BLUE, lead: LEAD[leaderSide(r)] };
 }
 

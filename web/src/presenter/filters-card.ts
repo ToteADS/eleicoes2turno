@@ -35,6 +35,7 @@ export class FiltersCard {
         <label class="f"><span>${t('filters_region')}</span><select id="fRegion"></select></label>
         <label class="f"><span>${t('filters_state')}</span><select id="fUf"></select></label>
         <label class="f"><span>${t('filters_city')}</span><input id="fCity" list="cityList" autocomplete="off" spellcheck="false"><datalist id="cityList"></datalist></label>
+        <div class="map-slot"></div>
       </div>`;
     this.country = el.querySelector('#fCountry')!;
     this.region = el.querySelector('#fRegion')!;
@@ -66,6 +67,11 @@ export class FiltersCard {
   /** Where the round toggle goes, between the title and the filters button. */
   get roundSlot(): HTMLElement {
     return this.el.querySelector('.round-slot')!;
+  }
+
+  /** Where the map options (type of map, section labels) go, after the area filters. */
+  get mapSlot(): HTMLElement {
+    return this.el.querySelector('.map-slot')!;
   }
 
   setTitle(title: string): void {

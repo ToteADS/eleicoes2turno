@@ -8,6 +8,7 @@ export class NullGlobe implements GlobeRenderer {
   setStates(): void {}
   setMunicipalities(): void {}
   setAbroadCities(): void {}
+  setMapOptions(): void {}
   focus(): void {}
   setPadding(): void {}
   onPick(): void {}

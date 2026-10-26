@@ -1,6 +1,9 @@
 import type { AreaCollection } from '../infra/globe';
 import type { AreaResult } from '../domain/types';
 import { ManualClock } from '../testing/manual-clock';
+import { setLocale } from '../i18n';
+import { BLUE, RED, TIE } from './area-look';
+import type { LabelImage } from './label-image';
 import { frameInterval, MAX_TWEEN_AREAS, MapLibreGlobe, type MapLike } from './maplibre-globe';
 
 class FakeMap {
@@ -32,6 +35,11 @@ class FakeMap {
   getCenter = () => this.center;
   getCanvas = () => this.canvas;
   queryRenderedFeatures = () => [] as unknown[];
+  images: Record<string, { image: unknown; options: unknown }> = {};
+  addImage = (id: string, image: unknown, options: unknown) => { this.images[id] = { image, options }; };
+  hasImage = (id: string) => id in this.images;
+  resolver: ((id: string) => void) | null = null;
+  setMissingStyleImageResolver = (cb: ((id: string) => void) | null) => { this.resolver = cb; };
   last(name: string) {
     return [...this.calls].reverse().find((c) => c.name === name);
   }
@@ -45,9 +53,9 @@ const square = (x: number, y: number, props: Record<string, unknown>) => ({
 const states: AreaCollection = { type: 'FeatureCollection', features: [square(-42, -13, { uf: 'BA', name: 'Bahia' })] };
 const released: AreaResult = { el: 1, comp: 1, abst: 0, vv: 1, vb: 0, vn: 0, l: 6, f: 4, st: 1, ts: 1, dg: '', hg: '', released: true };
 
-async function mounted(clock?: ManualClock) {
+async function mounted(clock?: ManualClock, labelImage?: (text: string) => LabelImage | null) {
   const fake = new FakeMap();
-  const globe = new MapLibreGlobe(() => fake as unknown as MapLike, clock);
+  const globe = new MapLibreGlobe(() => fake as unknown as MapLike, clock, labelImage);
   const p = globe.mount(document.createElement('div'));
   fake.fire('load');
   await p;
@@ -354,5 +362,246 @@ describe('MapLibreGlobe live update tween', () => {
     globe.setStates(states, { ba: at(3, 7) }, { animate: true });
     expect(raf).toHaveBeenCalled();
     raf.mockRestore();
+  });
+});
+
+describe('MapLibreGlobe map type', () => {
+  const at = (l: number, f: number): AreaResult => ({ ...released, l, f });
+  const brProps = (fake: FakeMap) => (fake.data.br as AreaCollection).features.map((f) => f.properties);
+  const leader = { type: 'leader' as const, sectionLabels: false };
+
+  it('"Mais votos" fills each area whole in the leader colour, ties neutral, no data grey', async () => {
+    const { fake, globe } = await mounted();
+    const three: AreaCollection = { type: 'FeatureCollection', features: [...states.features, square(-50, -25, { uf: 'PR' }), square(-47, -23, { uf: 'SP' }), square(-44, -20, { uf: 'MG' })] };
+    globe.setMapOptions(leader);
+    globe.setStates(three, { ba: at(6, 4), pr: at(3, 7), sp: at(5, 5) });
+    expect(brProps(fake)).toEqual([{ uf: 'BA', side: 'L' }, { uf: 'PR', side: 'R' }, { uf: 'SP', side: 'W', color: TIE }, { uf: 'MG', side: 'X' }]);
+  });
+
+  it('applies to countries, municipalities and abroad city dots too', async () => {
+    const { fake, globe } = await mounted();
+    globe.setMapOptions(leader);
+    globe.setWorld({ type: 'FeatureCollection', features: [square(138, 35, { iso: 392 })] }, { '392': at(3, 7) });
+    globe.setMunicipalities('BA', { type: 'FeatureCollection', features: [square(-42, -13, { id: '1' })] }, { 1: at(6, 4) });
+    globe.setAbroadCities([{ cd: '30627', nm: 'Tóquio', country: 'Japão', iso: 392, lat: 35, lon: 139 }], { '30627': at(3, 7) });
+    expect((fake.data.world as AreaCollection).features.map((f) => f.properties)).toEqual([{ iso: 392, side: 'R' }]);
+    expect((fake.data.muni as AreaCollection).features.map((f) => f.properties)).toEqual([{ id: '1', side: 'L' }]);
+    expect((fake.data.cities as AreaCollection).features[0].properties?.side).toBe('R');
+  });
+
+  it('switching type repaints at once, without a tween', async () => {
+    const clock = new ManualClock();
+    const { fake, globe } = await mounted(clock);
+    globe.setStates(states, { ba: at(6, 4) });
+    expect(brProps(fake)).toHaveLength(2); // split
+    globe.setMapOptions(leader);
+    globe.setStates(states, { ba: at(6, 4) });
+    expect(clock.pending).toBe(0);
+    expect(brProps(fake)).toEqual([{ uf: 'BA', side: 'L' }]);
+    globe.setMapOptions({ type: 'share', sectionLabels: false });
+    globe.setStates(states, { ba: at(6, 4) });
+    expect(brProps(fake)).toEqual([{ uf: 'BA', side: 'L' }, { uf: 'BA', side: 'R' }]);
+  });
+
+  it('a live leader change tweens the fill colour and lands on the new leader', async () => {
+    const clock = new ManualClock();
+    const { fake, globe } = await mounted(clock);
+    globe.setMapOptions(leader);
+    globe.setStates(states, { ba: at(6, 4) });
+    globe.setStates(states, { ba: at(4, 6) }, { animate: true });
+    clock.step(100);
+    const mid = brProps(fake);
+    expect(mid).toHaveLength(1);
+    expect(mid[0]?.side).toBe('W');
+    expect([RED, BLUE]).not.toContain(mid[0]?.color);
+    clock.run(50);
+    expect(brProps(fake)).toEqual([{ uf: 'BA', side: 'R' }]);
+  });
+
+  it('a share change with the same leader does not tween in "Mais votos"', async () => {
+    const clock = new ManualClock();
+    const { globe } = await mounted(clock);
+    globe.setMapOptions(leader);
+    globe.setStates(states, { ba: at(6, 4) });
+    globe.setStates(states, { ba: at(7, 3) }, { animate: true });
+    expect(clock.pending).toBe(0);
+  });
+
+  it('first-round solid fills ignore the map type', async () => {
+    const { fake, globe } = await mounted();
+    globe.setMapOptions(leader);
+    globe.setStates(states, { ba: { fill: '#2e9e5b', el: 1 } });
+    expect(brProps(fake)).toEqual([{ uf: 'BA', side: 'W', color: '#2e9e5b' }]);
+  });
+});
+
+describe('MapLibreGlobe section labels', () => {
+  const at = (st: number, ts: number): AreaResult => ({ ...released, st, ts });
+  const on = { type: 'share' as const, sectionLabels: true };
+  const off = { type: 'share' as const, sectionLabels: false };
+  const tick = () => new Promise<void>((res) => queueMicrotask(res));
+  const labels = (fake: FakeMap) => (fake.data.labels as AreaCollection).features as unknown as { geometry: { coordinates: number[] }; properties: Record<string, unknown> }[];
+  const layout = (fake: FakeMap) => fake.calls.filter((c) => c.name === 'setLayoutProperty' && c.args[0] === 'labels').map((c) => c.args[2]);
+  const munis: AreaCollection = { type: 'FeatureCollection', features: [square(-42, -13, { id: '1' }), { ...square(-41, -13, { id: '2' }), geometry: { type: 'Polygon' as const, coordinates: [[[-41, -13], [-38, -13], [-38, -10], [-41, -10], [-41, -13]]] } }] };
+  afterEach(() => setLocale('pt'));
+
+  it('adds a hidden symbol layer sorted by area size, with no glyphs needed', async () => {
+    const { fake } = await mounted();
+    const layer = fake.calls.find((c) => c.name === 'addLayer' && (c.args[0] as { id: string }).id === 'labels')!.args[0] as { type: string; layout: Record<string, unknown> };
+    expect(layer.type).toBe('symbol');
+    expect(layer.layout.visibility).toBe('none');
+    expect(layer.layout['icon-image']).toEqual(['get', 'img']);
+    expect(layer.layout['symbol-sort-key']).toEqual(['get', 'rank']);
+    expect(layer.layout['icon-allow-overlap']).toBe(false);
+    expect(layer.layout['text-field']).toBeUndefined();
+  });
+
+  it('are off by default: nothing is built', async () => {
+    const { fake, globe } = await mounted();
+    globe.setStates(states, { ba: at(3, 8) });
+    await tick();
+    expect(labels(fake)).toEqual([]);
+    expect(layout(fake)).toEqual([]);
+  });
+
+  it('on: one label per area with sections, at its centre, text = % totalized', async () => {
+    const { fake, globe } = await mounted();
+    globe.setMapOptions(on);
+    globe.setStates(states, { ba: at(3, 8) });
+    await tick();
+    expect(layout(fake)).toEqual(['visible']);
+    const [l] = labels(fake);
+    expect(l.properties).toEqual({ kind: 'br', key: 'BA', img: 'pct:37,5%', rank: -1 });
+    expect(l.geometry.coordinates[0]).toBeCloseTo(-41.5, 1);
+    expect(l.geometry.coordinates[1]).toBeCloseTo(-12.5, 1);
+  });
+
+  it('areas without anything counted get no label', async () => {
+    const { fake, globe } = await mounted();
+    globe.setMapOptions(on);
+    globe.setStates({ type: 'FeatureCollection', features: [...states.features, square(-50, -25, { uf: 'PR' }), square(-47, -23, { uf: 'SP' })] }, { ba: at(1, 1), pr: at(0, 5) });
+    await tick();
+    expect(labels(fake).map((l) => l.properties.key)).toEqual(['BA']);
+  });
+
+  it('turning them on later builds them from what is drawn; off clears and hides them', async () => {
+    const { fake, globe } = await mounted();
+    globe.setStates(states, { ba: at(1, 2) });
+    globe.setMapOptions(on);
+    await tick();
+    expect(labels(fake)).toHaveLength(1);
+    globe.setMapOptions({ type: 'leader', sectionLabels: true }); // only the type changed
+    expect(layout(fake)).toEqual(['visible']);
+    globe.setMapOptions(off);
+    await tick();
+    expect(layout(fake)).toEqual(['visible', 'none']);
+    expect(labels(fake)).toEqual([]);
+  });
+
+  it('turned off before the queued rebuild runs, nothing is built', async () => {
+    const { fake, globe } = await mounted();
+    globe.setMapOptions(on);
+    globe.setStates(states, { ba: at(1, 2) });
+    globe.setMapOptions(off);
+    await tick();
+    expect(labels(fake)).toEqual([]);
+  });
+
+  it('every kind of area is labelled, and a poll repainting them all sets the source once', async () => {
+    const { fake, globe } = await mounted();
+    globe.setMapOptions(on);
+    await tick();
+    let sets = 0;
+    const real = fake.getSource;
+    fake.getSource = (id: string) => ({ setData: (d: unknown) => { if (id === 'labels') sets++; real(id).setData(d); } });
+    globe.setWorld({ type: 'FeatureCollection', features: [square(138, 35, { iso: 392 })] }, { '392': at(1, 4) });
+    globe.setStates(states, { ba: at(1, 2) });
+    globe.setMunicipalities('BA', munis, { 1: at(1, 1), 2: at(2, 3) });
+    globe.setAbroadCities([{ cd: '30627', nm: 'Tóquio', country: 'Japão', iso: 392, lat: 35, lon: 139 }], { '30627': { ...at(1, 3), el: 40 } });
+    await tick();
+    expect(sets).toBe(1);
+    expect(labels(fake).map((l) => [l.properties.kind, l.properties.key, l.properties.img])).toEqual([
+      ['world', 392, 'pct:25%'], ['br', 'BA', 'pct:50%'], ['muni', '1', 'pct:100%'], ['muni', '2', 'pct:66,6%'], ['city', '30627', 'pct:33,3%'],
+    ]);
+    const city = labels(fake).find((l) => l.properties.kind === 'city')!;
+    expect(city.geometry.coordinates).toEqual([139, 35]);
+    expect(city.properties.iso).toBe(392);
+    expect(city.properties.rank).toBe(-40);
+  });
+
+  it('bigger municipalities win collisions (lower sort key)', async () => {
+    const { fake, globe } = await mounted();
+    globe.setMapOptions(on);
+    globe.setMunicipalities('BA', munis, { 1: at(1, 1), 2: at(1, 1) });
+    await tick();
+    const rank = Object.fromEntries(labels(fake).map((l) => [l.properties.key, l.properties.rank as number]));
+    expect(rank['2']).toBeLessThan(rank['1']);
+  });
+
+  it('labels follow each poll and leave with the municipalities', async () => {
+    const { fake, globe } = await mounted();
+    globe.setMapOptions(on);
+    globe.setMunicipalities('BA', munis, { 1: at(1, 4) });
+    await tick();
+    expect(labels(fake).map((l) => l.properties.img)).toEqual(['pct:25%']);
+    globe.setMunicipalities('BA', munis, { 1: at(3, 4), 2: at(1, 1) });
+    await tick();
+    expect(labels(fake).map((l) => l.properties.img)).toEqual(['pct:75%', 'pct:100%']);
+    globe.setMunicipalities(null, null, {});
+    await tick();
+    expect(labels(fake)).toEqual([]);
+  });
+
+  it('follow the locale', async () => {
+    setLocale('en');
+    const { fake, globe } = await mounted();
+    globe.setMapOptions(on);
+    globe.setStates(states, { ba: at(3, 8) });
+    await tick();
+    expect(labels(fake)[0].properties.img).toBe('pct:37.5%');
+  });
+
+  it('first-round fills never get labels', async () => {
+    const { fake, globe } = await mounted();
+    globe.setMapOptions(on);
+    globe.setStates(states, { ba: { fill: '#d7262d', el: 1 } });
+    globe.setAbroadCities([{ cd: '30627', nm: 'Tóquio', country: 'Japão', iso: 392, lat: 35, lon: 139 }], { '30627': { fill: '#d7262d', el: 1 } });
+    await tick();
+    expect(labels(fake)).toEqual([]);
+  });
+
+  it('a label image is drawn the first time its text is needed, once', async () => {
+    const drawn: string[] = [];
+    const img: LabelImage = { width: 2, height: 1, data: new Uint8ClampedArray(8), pixelRatio: 2 };
+    const { fake } = await mounted(undefined, (t) => { drawn.push(t); return t === 'x' ? null : img; });
+    fake.resolver!('pct:37,5%');
+    fake.resolver!('pct:37,5%');
+    fake.resolver!('other');
+    fake.resolver!('pct:x');
+    expect(drawn).toEqual(['37,5%', 'x']);
+    expect(fake.images['pct:37,5%']).toEqual({ image: img, options: { pixelRatio: 2 } });
+    expect(Object.keys(fake.images)).toEqual(['pct:37,5%']);
+  });
+
+  it('show only the areas of the view on screen', async () => {
+    const { fake, globe } = await mounted();
+    const labelFilter = () => fake.calls.filter((c) => c.name === 'setFilter' && c.args[0] === 'labels').at(-1)!.args[1];
+    globe.setStates({ type: 'FeatureCollection', features: [...states.features, square(-50, -25, { uf: 'PR' })] }, {});
+    globe.setMunicipalities('BA', munis, {});
+    globe.setAbroadCities([{ cd: '30627', nm: 'Tóquio', country: 'Japão', iso: 392, lat: 35, lon: 139 }], {});
+    globe.focus({ kind: 'all' });
+    expect(labelFilter()).toEqual(['in', ['get', 'kind'], ['literal', ['world', 'br']]]);
+    globe.focus({ kind: 'brazil', region: 'ALL' });
+    expect(labelFilter()).toEqual(['==', ['get', 'kind'], 'br']);
+    globe.focus({ kind: 'brazil', region: 'NE' });
+    expect(labelFilter()).toEqual(['all', ['==', ['get', 'kind'], 'br'], ['in', ['get', 'key'], ['literal', ['BA']]]]);
+    globe.focus({ kind: 'uf', uf: 'BA' });
+    expect(labelFilter()).toEqual(['==', ['get', 'kind'], 'muni']);
+    globe.focus({ kind: 'municipality', uf: 'BA', id: '2' });
+    expect(labelFilter()).toEqual(['all', ['==', ['get', 'kind'], 'muni'], ['==', ['get', 'key'], '2']]);
+    globe.focus({ kind: 'country', iso: 392 });
+    expect(labelFilter()).toEqual(['all', ['==', ['get', 'kind'], 'city'], ['==', ['get', 'iso'], 392]]);
+    globe.focus({ kind: 'abroadCity', cd: '30627' });
+    expect(labelFilter()).toEqual(['all', ['==', ['get', 'kind'], 'city'], ['==', ['get', 'iso'], 392]]);
   });
 });

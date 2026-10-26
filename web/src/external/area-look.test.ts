@@ -1,5 +1,5 @@
 import type { AreaResult } from '../domain/types';
-import { BLUE, colorProps, GHOST, leadProps, lookOf, mixLook, RED, sameLook } from './area-look';
+import { BLUE, colorProps, GHOST, leadProps, lookOf, mixLook, RED, sameLook, TIE } from './area-look';
 
 const r = (l: number, f: number, released = true): AreaResult => ({ el: 1, comp: 1, abst: 0, vv: l + f, vb: 0, vn: 0, l, f, st: 1, ts: 1, dg: '', hg: '', released });
 
@@ -56,5 +56,34 @@ describe('area looks', () => {
     expect(leadProps(lookOf(r(4, 6)))).toEqual({ side: 'R' });
     expect(leadProps(lookOf(undefined))).toEqual({ side: 'X' });
     expect(leadProps({ ...lookOf(r(6, 4)), lead: '#123456' })).toEqual({ side: 'W', color: '#123456' });
+  });
+});
+
+describe('area looks, "Mais votos" map', () => {
+  it('the whole area takes the leader colour: Lula red, Flávio blue', () => {
+    expect(lookOf(r(6, 4), 'leader')).toEqual({ share: null, west: RED, east: RED, lead: RED });
+    expect(lookOf(r(1, 3), 'leader')).toEqual({ share: null, west: BLUE, east: BLUE, lead: BLUE });
+  });
+
+  it('a tie is neutral and differs from no data', () => {
+    expect(lookOf(r(2, 2), 'leader')).toEqual({ share: null, west: TIE, east: TIE, lead: TIE });
+    expect(TIE).not.toBe(GHOST);
+    expect(leadProps(lookOf(r(2, 2), 'leader'))).toEqual({ side: 'W', color: TIE });
+  });
+
+  it('no numbers stay grey', () => {
+    for (const x of [undefined, r(0, 0), r(5, 5, false)]) expect(lookOf(x, 'leader')).toEqual(lookOf(x));
+  });
+
+  it('the share map stays the default', () => {
+    expect(lookOf(r(6, 4), 'share')).toEqual(lookOf(r(6, 4)));
+  });
+
+  it('a leader change blends the colour in OKLab without a split line', () => {
+    const m = mixLook(lookOf(r(6, 4), 'leader'), lookOf(r(4, 6), 'leader'), 0.5);
+    expect(m.share).toBeNull();
+    expect([RED, BLUE]).not.toContain(m.lead);
+    expect(leadProps(m)).toEqual({ side: 'W', color: m.lead });
+    expect(leadProps(lookOf(r(6, 4), 'leader'))).toEqual({ side: 'L' });
   });
 });

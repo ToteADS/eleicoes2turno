@@ -1,4 +1,5 @@
 import { initialFilters, setCity, setCountry, setUf, type FilterState } from '../domain/filters';
+import { ROUND1_MAP_OPTIONS, type MapOptions } from '../domain/map-options';
 import type { PresenceDto } from '../domain/dtos/presence-dto';
 import { ranking, sumMulti } from '../domain/multi';
 import type { AbroadCity, AreaListResponse, AreaResult, MultiResult, Notice, PresenceAnswer, PublicConfig, Round, Round1Summary, Summary } from '../domain/types';
@@ -12,6 +13,8 @@ import { CheckedAgo } from './checked-ago';
 import { CreatorCredit } from './creator-credit';
 import { FiltersCard } from './filters-card';
 import { GlobeControls } from './globe-controls';
+import { MapOptionsControl } from './map-options-control';
+import { mapOptionsUrl, readMapOptions } from './map-options-url';
 import { bannerFor, NoticeBanner } from './notice-banner';
 import { ResultsCard } from './results-card';
 import { NullGlobe } from './null-globe';
@@ -97,12 +100,16 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
   const checked = new CheckedAgo(resultsCard.checkedSlot);
   const round1Card = new Round1Card($('.results-r1'));
   const roundToggle = new RoundToggle(filtersCard.roundSlot);
+  const mapControl = new MapOptionsControl(filtersCard.mapSlot);
   const tooltip = new Tooltip($('.tip'));
   const noticeBanner = new NoticeBanner($('#topbar'));
   const online = new OnlineCounter($('#topbar'), d.api, d.tabId ?? tabId());
   online.start();
 
   let round: Round = readRound(window.location.search);
+  let mapOptions: MapOptions = readMapOptions(window.location.search);
+  // the first round is final and multi-candidate: its own colours, no section labels
+  const effectiveMapOptions = (): MapOptions => (round === 1 ? ROUND1_MAP_OPTIONS : mapOptions);
   let filters = initialFilters();
   let summary: Summary | null = null;
   // operator notice (second round only); a failed fetch keeps the last one known
@@ -159,6 +166,7 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
     globe.setMunicipalities(filters.uf, muniGeo, round === 1 ? fills(r1Munis) : municipalities, { animate });
   const paintGlobe = (animate = false) => {
     const opts = { animate };
+    globe.setMapOptions(effectiveMapOptions());
     globe.setStates(states, round === 1 ? fills(r1?.ufs ?? {}) : summary?.ufs ?? {}, opts);
     globe.setWorld(world, round === 1 ? fills(r1?.countries ?? {}) : summary?.countries ?? {}, opts);
     globe.setAbroadCities(abroadCities, round === 1 ? fills(r1Abroad) : abroadResults, opts);
@@ -182,6 +190,7 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
     });
     const common = { stateNames, abroadCities, municipalityNames: names, municipalityCount: muniGeo?.features.length ?? 0 };
     roundToggle.render(round);
+    mapControl.render(mapOptions, round === 2);
     filtersCard.setTitle(round === 1 ? t('app_title_r1') : t('app_title'));
     $('.results-r1').hidden = round !== 1;
     $('.results-r2').hidden = round !== 2;
@@ -226,8 +235,9 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
     if (ufChanged && !(await loadMunicipalities(next.uf))) return;
     if (next !== filters) return; // superseded while loading
     paintMunicipalities();
-    globe.focus(viewFor(filters));
+    // close the phone filters sheet first: the flight must use the padding without it
     filtersCard.close();
+    globe.focus(viewFor(filters));
     render();
   };
   filtersCard.onChange((s) => void apply(s));
@@ -247,6 +257,14 @@ export async function createApp(d: AppDeps): Promise<{ dispose(): void }> {
     render();
   };
   roundToggle.onChange((r) => void switchRound(r));
+
+  // a new map type or labels repaint at once (no tween: it is not a data update)
+  mapControl.onChange((o) => {
+    mapOptions = o;
+    window.history.replaceState(window.history.state, '', mapOptionsUrl(window.location.href, o));
+    paintGlobe();
+    render();
+  });
 
   globe.onPick((p: GlobePick) => {
     if (p.kind === 'uf') void apply(setUf(filters, p.uf));

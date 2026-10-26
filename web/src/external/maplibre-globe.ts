@@ -2,10 +2,15 @@ import bbox from '@turf/bbox';
 import type { Feature, FeatureCollection, MultiPolygon, Point, Polygon } from 'geojson';
 import { splitFeature } from '../domain/split';
 import { REGION_OF } from '../domain/filters';
+import { sectionsLabel } from '../domain/format';
+import { labelPoint } from '../domain/label-point';
+import { defaultMapOptions, type MapOptions } from '../domain/map-options';
 import type { AbroadCity } from '../domain/types';
+import { getLocale } from '../i18n';
 import { browserClock, tween, type FrameClock, type Tween } from '../infra/animation';
 import type { AreaCollection, AreaPaint, GlobeHover, GlobePick, GlobeRenderer, GlobeView, Padding, PaintOptions, SolidFill } from '../infra/globe';
 import { BLUE, colorProps, GHOST, leadProps, lookOf, mixLook, RED, sameLook, type AreaLook } from './area-look';
+import { renderLabelImage, type LabelImage } from './label-image';
 import { IdleRotation } from './rotation';
 
 /** The slice of the MapLibre Map API this adapter uses (keeps the library swappable and testable). */
@@ -27,6 +32,9 @@ export interface MapLike {
   getCenter(): { lng: number; lat: number };
   getCanvas(): HTMLCanvasElement;
   queryRenderedFeatures(point: unknown, options: Record<string, unknown>): unknown[];
+  addImage(id: string, image: { width: number; height: number; data: Uint8ClampedArray }, options: Record<string, unknown>): unknown;
+  hasImage(id: string): boolean;
+  setMissingStyleImageResolver(resolver: ((id: string) => void) | null): unknown;
 }
 
 const HOME = '#d9dde3';
@@ -50,12 +58,16 @@ const empty = (): FeatureCollection => ({ type: 'FeatureCollection', features: [
 const fc = <G extends Polygon | MultiPolygon | Point>(features: Feature<G>[]): FeatureCollection<G> => ({ type: 'FeatureCollection', features });
 type Area = Feature<Polygon | MultiPolygon>;
 
+/** the label icons are named after their text: one image per distinct label, made on demand */
+const LABEL_IMAGE = 'pct:';
+type LabelKind = 'world' | 'br' | 'muni' | 'city';
+const kindIs = (kind: LabelKind) => ['==', ['get', 'kind'], kind];
+
 const isSolid = (p: unknown): p is SolidFill => p !== undefined && p !== null && typeof p === 'object' && 'fill' in p;
 const solidProps = (p: SolidFill) => (p.fill ? { side: 'W', color: p.fill } : { side: 'X' });
 
 /** What one area is drawn with: a first-round solid fill, or a second-round red × blue look. */
 type Look = SolidFill | AreaLook;
-const toLook = (p: AreaPaint | undefined): Look => (isSolid(p) ? p : lookOf(p));
 
 /** Cuts the area at the look's share; the west part in its west colour, the east in its east colour. */
 function lookPieces(f: Area, look: AreaLook, props: Record<string, unknown>): Area[] {
@@ -123,8 +135,17 @@ export class MapLibreGlobe implements GlobeRenderer {
   private worldParts = new WeakMap<Area, { pieces: Area[]; crosses: boolean }>();
   /** main-thread cost (ms) of the last tween redraws, for the performance check */
   readonly frameCosts: number[] = [];
+  private options: MapOptions = defaultMapOptions();
+  /** per kind, what its label points are made of (the last set* call), built only while labels are on */
+  private labelInputs: Partial<Record<LabelKind, () => Feature<Point>[]>> = {};
+  private labelPoints = new WeakMap<object, { at: [number, number]; rank: number }>();
+  private labelsQueued = false;
 
-  constructor(private readonly createMap: (el: HTMLElement) => MapLike, private readonly clock: FrameClock = browserClock) {}
+  constructor(
+    private readonly createMap: (el: HTMLElement) => MapLike,
+    private readonly clock: FrameClock = browserClock,
+    private readonly labelImage: (text: string) => LabelImage | null = renderLabelImage,
+  ) {}
 
   async mount(el: HTMLElement): Promise<void> {
     this.map = this.createMap(el);
@@ -138,6 +159,58 @@ export class MapLibreGlobe implements GlobeRenderer {
     this.padding = p;
   }
 
+  setMapOptions(o: MapOptions): void {
+    const labelsChanged = o.sectionLabels !== this.options.sectionLabels;
+    this.options = { ...o };
+    if (!labelsChanged) return;
+    this.map.setLayoutProperty('labels', 'visibility', o.sectionLabels ? 'visible' : 'none');
+    if (o.sectionLabels) this.queueLabels();
+    else this.setData('labels', empty());
+  }
+
+  private toLook(p: AreaPaint | undefined): Look {
+    return isSolid(p) ? p : lookOf(p, this.options.type);
+  }
+
+  /**
+   * Records how to build one kind's labels (text = % of sections totalized) and rebuilds
+   * the label source once per task, so a poll that repaints every layer sets it once.
+   */
+  private labels(kind: LabelKind, build: (() => Feature<Point>[]) | null): void {
+    if (build) this.labelInputs[kind] = build;
+    else delete this.labelInputs[kind];
+    if (this.options.sectionLabels) this.queueLabels();
+  }
+
+  private queueLabels(): void {
+    if (this.labelsQueued) return;
+    this.labelsQueued = true;
+    queueMicrotask(() => {
+      this.labelsQueued = false;
+      if (!this.options.sectionLabels) return;
+      this.setData('labels', fc(Object.values(this.labelInputs).flatMap((build) => build())));
+    });
+  }
+
+  /** Label points of `areas` with a result; bigger areas win label collisions (lower sort key). */
+  private areaLabels(kind: LabelKind, areas: Area[], key: (i: number) => string | number, item: (i: number) => AreaPaint | undefined): () => Feature<Point>[] {
+    return () => {
+      const locale = getLocale();
+      return areas.flatMap((f, i): Feature<Point>[] => {
+        const r = item(i);
+        const text = isSolid(r) ? null : sectionsLabel(r, locale);
+        if (!text) return [];
+        // computed once per shape (pole of inaccessibility), on the first time it gets a label
+        let p = this.labelPoints.get(f);
+        if (!p) {
+          p = { at: labelPoint(f), rank: -bboxArea(f) };
+          this.labelPoints.set(f, p);
+        }
+        return [{ type: 'Feature', geometry: { type: 'Point', coordinates: p.at }, properties: { kind, key: key(i), img: LABEL_IMAGE + text, rank: p.rank } }];
+      });
+    };
+  }
+
   setWorld(world: AreaCollection, countries: Record<string, AreaPaint>, opts: PaintOptions = {}): void {
     this.world.clear();
     this.worldShapes.clear();
@@ -146,15 +219,17 @@ export class MapLibreGlobe implements GlobeRenderer {
       this.world.set(isos[i], f);
       this.worldShapes.add(isos[i]);
     });
-    this.draw('world', world, world.features.length, (i) => toLook(countries[String(isos[i])]), (i, look) => this.countryPieces(world.features[i], isos[i], look), opts);
+    this.draw('world', world, world.features.length, (i) => this.toLook(countries[String(isos[i])]), (i, look) => this.countryPieces(world.features[i], isos[i], look), opts);
+    this.labels('world', this.areaLabels('world', world.features, (i) => isos[i], (i) => countries[String(isos[i])]));
   }
 
   setStates(states: AreaCollection, ufs: Record<string, AreaPaint>, opts: PaintOptions = {}): void {
     this.states.clear();
     const list = states.features.map((f) => String(f.properties?.uf));
     states.features.forEach((f, i) => this.states.set(list[i], f));
-    this.draw('br', states, list.length, (i) => toLook(ufs[list[i].toLowerCase()]), (i, look) => paintArea(states.features[i], look, { uf: list[i] }), opts);
+    this.draw('br', states, list.length, (i) => this.toLook(ufs[list[i].toLowerCase()]), (i, look) => paintArea(states.features[i], look, { uf: list[i] }), opts);
     this.setData('brline', states);
+    this.labels('br', this.areaLabels('br', states.features, (i) => list[i], (i) => ufs[list[i].toLowerCase()]));
   }
 
   setMunicipalities(uf: string | null, geo: AreaCollection | null, items: Record<string, AreaPaint>, opts: PaintOptions = {}): void {
@@ -163,17 +238,19 @@ export class MapLibreGlobe implements GlobeRenderer {
       this.reset('muni');
       this.setData('muni', empty());
       this.setData('muniline', empty());
+      this.labels('muni', null);
       return;
     }
     const ids = geo.features.map((f) => String(f.properties?.id));
     geo.features.forEach((f, i) => this.munis.set(ids[i], f));
-    this.draw('muni', geo, ids.length, (i) => toLook(items[ids[i]]), (i, look) => paintArea(geo.features[i], look, { id: ids[i] }), opts);
+    this.draw('muni', geo, ids.length, (i) => this.toLook(items[ids[i]]), (i, look) => paintArea(geo.features[i], look, { id: ids[i] }), opts);
     this.setData('muniline', geo);
+    this.labels('muni', this.areaLabels('muni', geo.features, (i) => ids[i], (i) => items[ids[i]]));
   }
 
   setAbroadCities(cities: AbroadCity[], items: Record<string, AreaPaint>, opts: PaintOptions = {}): void {
     this.cities = new Map(cities.map((c) => [c.cd, c]));
-    this.draw('cities', cities, cities.length, (i) => toLook(items[cities[i].cd]), (i, look) => {
+    this.draw('cities', cities, cities.length, (i) => this.toLook(items[cities[i].cd]), (i, look) => {
       const c = cities[i];
       return [{
         type: 'Feature' as const,
@@ -181,6 +258,16 @@ export class MapLibreGlobe implements GlobeRenderer {
         properties: { cd: c.cd, iso: c.iso, el: items[c.cd]?.el ?? 0, ...(isSolid(look) ? solidProps(look) : leadProps(look)) },
       }];
     }, opts);
+    this.labels('city', () => {
+      const locale = getLocale();
+      return cities.flatMap((c): Feature<Point>[] => {
+        const r = items[c.cd];
+        const text = r && !isSolid(r) ? sectionsLabel(r, locale) : null;
+        if (!text) return [];
+        // the biggest electorates win collisions
+        return [{ type: 'Feature', geometry: { type: 'Point', coordinates: [c.lon, c.lat] }, properties: { kind: 'city', key: c.cd, iso: c.iso, img: LABEL_IMAGE + text, rank: -r.el } }];
+      });
+    });
   }
 
   /** Overseas pieces (Alaska, French Guiana…) and countries across the antimeridian take the leader's colour. */
@@ -265,6 +352,7 @@ export class MapLibreGlobe implements GlobeRenderer {
 
     switch (view.kind) {
       case 'all': {
+        this.labelFilter(['in', ['get', 'kind'], ['literal', ['world', 'br']]]);
         this.paint(sideColor, sideColor);
         this.citiesFilter(['!', ['in', ['get', 'iso'], ['literal', [...this.worldShapes]]]]);
         this.setData('sel', empty());
@@ -274,6 +362,7 @@ export class MapLibreGlobe implements GlobeRenderer {
       }
       case 'brazil': {
         const ufs = [...this.states.keys()].filter((uf) => view.region === 'ALL' || REGION_OF[uf] === view.region);
+        this.labelFilter(view.region === 'ALL' ? kindIs('br') : ['all', kindIs('br'), ['in', ['get', 'key'], ['literal', ufs]]]);
         this.paint(view.region === 'ALL' ? sideColor : activeColor('uf', ufs), ['case', ['==', ['get', 'side'], 'X'], GHOST, HOME]);
         this.setData('sel', empty());
         this.fit(ufs.map((uf) => this.states.get(uf)!).filter(Boolean), 6);
@@ -284,6 +373,7 @@ export class MapLibreGlobe implements GlobeRenderer {
         const state = this.states.get(view.uf);
         this.paint(['case', ['==', ['get', 'uf'], view.uf], 'rgba(0,0,0,0)', GHOST], ['case', ['==', ['get', 'side'], 'X'], GHOST, HOME]);
         const muni = view.kind === 'municipality' ? this.munis.get(view.id) : undefined;
+        this.labelFilter(view.kind === 'municipality' ? ['all', kindIs('muni'), ['==', ['get', 'key'], view.id]] : kindIs('muni'));
         this.map.setPaintProperty('muni-fill', 'fill-color', muni ? activeColor('id', [view.kind === 'municipality' ? view.id : '']) : sideColor);
         const target = muni ?? state;
         this.setData('sel', target ?? empty());
@@ -291,6 +381,7 @@ export class MapLibreGlobe implements GlobeRenderer {
         return;
       }
       case 'country': {
+        this.labelFilter(['all', kindIs('city'), ['==', ['get', 'iso'], view.iso]]);
         this.paint(HOME, activeColor('iso', [view.iso]));
         this.citiesFilter(['==', ['get', 'iso'], view.iso]);
         const shape = this.world.get(view.iso);
@@ -305,6 +396,7 @@ export class MapLibreGlobe implements GlobeRenderer {
       case 'abroadCity': {
         const c = this.cities.get(view.cd);
         if (!c) return;
+        this.labelFilter(['all', kindIs('city'), ['==', ['get', 'iso'], c.iso]]);
         this.paint(HOME, activeColor('iso', [c.iso]));
         this.citiesFilter(['==', ['get', 'iso'], c.iso]);
         this.setData('sel', empty());
@@ -338,6 +430,10 @@ export class MapLibreGlobe implements GlobeRenderer {
   private paint(brFill: unknown, worldFill: unknown): void {
     this.map.setPaintProperty('br-fill', 'fill-color', brFill);
     this.map.setPaintProperty('world-fill', 'fill-color', worldFill);
+  }
+
+  private labelFilter(filter: unknown): void {
+    this.map.setFilter('labels', filter);
   }
 
   private citiesFilter(filter: unknown): void {
@@ -391,6 +487,12 @@ export class MapLibreGlobe implements GlobeRenderer {
   }
 
   private wireEvents(): void {
+    // label icons are drawn the first time a text is needed (one per distinct text)
+    this.map.setMissingStyleImageResolver((id: string) => {
+      if (!id.startsWith(LABEL_IMAGE) || this.map.hasImage(id)) return;
+      const img = this.labelImage(id.slice(LABEL_IMAGE.length));
+      if (img) this.map.addImage(id, img, { pixelRatio: img.pixelRatio });
+    });
     this.map.on('moveend', () => {
       if (this.spinAfterFlight) {
         this.spinAfterFlight = false;
@@ -422,7 +524,7 @@ export class MapLibreGlobe implements GlobeRenderer {
   }
 
   private addLayers(): void {
-    for (const id of ['world', 'br', 'brline', 'muni', 'muniline', 'cities', 'sel', 'hover']) {
+    for (const id of ['world', 'br', 'brline', 'muni', 'muniline', 'cities', 'sel', 'hover', 'labels']) {
       this.map.addSource(id, { type: 'geojson', data: empty() });
     }
     const radius = ['+', 3, ['/', ['sqrt', ['get', 'el']], 22]];
@@ -450,6 +552,19 @@ export class MapLibreGlobe implements GlobeRenderer {
       },
       { id: 'hover-line', type: 'line', source: 'hover', paint: { 'line-color': '#111418', 'line-width': 1.6 } },
       { id: 'sel-line', type: 'line', source: 'sel', paint: { 'line-color': '#111418', 'line-width': 2 } },
+      {
+        // % of sections totalized; off by default. MapLibre drops labels that would collide,
+        // keeping the biggest areas first (symbol-sort-key = minus the area's size).
+        id: 'labels', type: 'symbol', source: 'labels',
+        layout: {
+          visibility: 'none',
+          'icon-image': ['get', 'img'],
+          'icon-padding': 3,
+          'symbol-sort-key': ['get', 'rank'],
+          'icon-allow-overlap': false,
+          'icon-ignore-placement': false,
+        },
+      },
     ];
     layers.forEach((l) => this.map.addLayer(l));
   }
