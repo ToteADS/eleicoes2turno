@@ -18,7 +18,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/api ./cmd/api
 
 # ---- runtime ----
 # alpine (not distroless) so Coolify's health check can use wget inside the container
-FROM alpine:3.22
+FROM alpine:3.24
 RUN apk add --no-cache ca-certificates tzdata && adduser -D -H -u 10001 app
 WORKDIR /app
 COPY --from=api /out/api /app/api
